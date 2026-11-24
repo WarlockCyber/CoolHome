@@ -1,0 +1,7 @@
+{
+  "navigationBarTitleText": "Устройство",
+  "backgroundColor": "@bgColor",
+  "backgroundTextStyle": "@bgTxtStyle",
+  "enablePullDownRefresh": true,
+  "usingComponents": {}
+}

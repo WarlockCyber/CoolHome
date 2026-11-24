@@ -1,0 +1,76 @@
+<view class="page">
+  <!-- Первый запуск: адрес сервера и токен -->
+  <view class="setup" ty:if="{{needsSetup}}">
+    <view class="setup-title">Подключение к CoolHome</view>
+    <view class="setup-hint">Укажите адрес вашего сервера и токен доступа, если он задан.</view>
+
+    <view class="field">
+      <view class="field-label">Адрес сервера</view>
+      <input
+        class="field-input"
+        type="text"
+        value="{{baseUrl}}"
+        placeholder="https://home.example.com"
+        bindinput="onBaseUrlInput"
+      />
+    </view>
+
+    <view class="field">
+      <view class="field-label">Токен доступа</view>
+      <input
+        class="field-input"
+        type="text"
+        password="{{true}}"
+        value="{{token}}"
+        placeholder="COOLHOME_AUTH_TOKEN"
+        bindinput="onTokenInput"
+      />
+    </view>
+
+    <view class="setup-error" ty:if="{{setupError}}">{{setupError}}</view>
+
+    <button class="primary" bindtap="onSubmitSetup" loading="{{loading}}" disabled="{{loading}}">Подключиться</button>
+  </view>
+
+  <!-- Список устройств -->
+  <view class="home" ty:if="{{!needsSetup}}">
+    <view class="toolbar">
+      <view class="sync">
+        <text ty:if="{{demo}}" class="badge">демо</text>
+        <text ty:if="{{lastSync}}">обновлено {{lastSync}}</text>
+        <text ty:if="{{!lastSync}}">ожидание синхронизации…</text>
+      </view>
+      <view class="toolbar-actions">
+        <text class="link" bindtap="onRefreshTap">{{loading ? '…' : 'обновить'}}</text>
+        <text class="link muted" bindlongtap="onEditServer">настройки</text>
+      </view>
+    </view>
+
+    <view class="banner" ty:if="{{error}}">{{error}}</view>
+
+    <view class="empty" ty:if="{{showEmpty}}">
+      Устройства не найдены. Проверьте, что аккаунт приложения привязан к проекту Tuya.
+    </view>
+
+    <view class="list">
+      <view
+        class="card"
+        ty:for="{{devices}}"
+        ty:for-item="device"
+        ty:key="id"
+        data-id="{{device.id}}"
+        bindtap="onTapDevice"
+      >
+        <view class="card-glyph">{{device.glyph}}</view>
+        <view class="card-body">
+          <view class="card-name">
+            <text>{{device.name}}</text>
+            <text class="dot-off" ty:if="{{!device.online}}">офлайн</text>
+          </view>
+          <view class="card-summary">{{device.summary}}</view>
+        </view>
+        <view class="chevron">›</view>
+      </view>
+    </view>
+  </view>
+</view>

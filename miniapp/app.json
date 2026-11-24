@@ -1,0 +1,22 @@
+{
+  "entryPagePath": "pages/home/index",
+  "pages": ["pages/home/index", "pages/device/index"],
+  "window": {
+    "navigationBarBackgroundColor": "@navBgColor",
+    "navigationBarTextStyle": "@navTxtStyle",
+    "navigationBarTitleText": "CoolHome",
+    "backgroundColor": "@bgColor",
+    "backgroundTextStyle": "@bgTxtStyle",
+    "backgroundColorTop": "@bgColorTop",
+    "backgroundColorBottom": "@bgColorBottom",
+    "enablePullDownRefresh": true,
+    "onReachBottomDistance": 50,
+    "pageOrientation": "portrait"
+  },
+  "networkTimeout": {
+    "request": 15000,
+    "connectSocket": 60000,
+    "uploadFile": 60000,
+    "downloadFile": 60000
+  }
+}

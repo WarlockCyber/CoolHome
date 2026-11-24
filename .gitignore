@@ -1,0 +1,6 @@
+/bin/
+/coolhome
+.env
+*.test
+# раскладка пульта
+/dashboard.json

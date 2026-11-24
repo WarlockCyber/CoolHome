@@ -1,0 +1,93 @@
+<view class="page">
+  <view class="banner" ty:if="{{error}}">
+    <text>{{error}}</text>
+    <text class="link" bindtap="onRetry">повторить</text>
+  </view>
+
+  <view class="offline-note" ty:if="{{showOfflineNote}}">
+    Устройство офлайн: показания могут быть устаревшими, команды не дойдут.
+  </view>
+
+  <!-- Управление -->
+  <view class="section" ty:if="{{controls.length}}">
+    <view class="section-title">Управление</view>
+
+    <view class="row" ty:for="{{controls}}" ty:for-item="ctrl" ty:key="code">
+      <!-- булев переключатель -->
+      <view class="row-line" ty:if="{{ctrl.kind === 'switch'}}">
+        <view class="row-label">{{ctrl.name}}</view>
+        <switch
+          class="row-control"
+          checked="{{ctrl.checked}}"
+          disabled="{{ctrl.disabled}}"
+          data-code="{{ctrl.code}}"
+          bindchange="onToggle"
+        />
+      </view>
+
+      <!-- числовой слайдер -->
+      <view class="slider-block" ty:if="{{ctrl.kind === 'slider'}}">
+        <view class="row-head">
+          <view class="row-label">{{ctrl.name}}</view>
+          <view class="row-value">{{ctrl.label}}</view>
+        </view>
+        <slider
+          min="{{ctrl.min}}"
+          max="{{ctrl.max}}"
+          step="{{ctrl.step}}"
+          value="{{ctrl.value}}"
+          disabled="{{ctrl.disabled}}"
+          activeColor="#238636"
+          backgroundColor="#30363d"
+          block-size="24"
+          data-code="{{ctrl.code}}"
+          data-scale="{{ctrl.scale}}"
+          bindchange="onSlide"
+        />
+      </view>
+
+      <!-- кнопка ИК-пульта -->
+      <view class="button-block" ty:if="{{ctrl.kind === 'button'}}">
+        <button
+          class="press"
+          disabled="{{ctrl.disabled}}"
+          data-code="{{ctrl.code}}"
+          bindtap="onPress"
+        >{{ctrl.name}}</button>
+      </view>
+
+      <!-- enum-режим -->
+      <view class="picker-block" ty:if="{{ctrl.kind === 'picker'}}">
+        <view class="row-label">{{ctrl.name}}</view>
+        <picker
+          range="{{ctrl.labels}}"
+          value="{{ctrl.index}}"
+          disabled="{{ctrl.disabled}}"
+          data-code="{{ctrl.code}}"
+          bindchange="onPick"
+        >
+          <view class="picker-value">{{ctrl.label}}</view>
+        </picker>
+      </view>
+    </view>
+  </view>
+
+  <!-- Показания -->
+  <view class="section" ty:if="{{readings.length}}">
+    <view class="section-title">Показания</view>
+    <view class="row reading" ty:for="{{readings}}" ty:for-item="item" ty:key="code">
+      <view class="row-label">{{item.name}}</view>
+      <view class="row-value">{{item.value}}</view>
+    </view>
+  </view>
+
+  <view class="empty" ty:if="{{loading}}">Загрузка…</view>
+
+  <view class="empty" ty:if="{{showUnsupported}}">{{unsupportedNote}}</view>
+
+  <view class="empty" ty:if="{{deviceNote && !showUnsupported}}">{{deviceNote}}</view>
+
+  <view class="empty" ty:if="{{showNoData}}">
+    Устройство не сообщает данных и не поддерживает запись.
+  </view>
+</view>

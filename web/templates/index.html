@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>CoolHome — умный дом</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230e1116'/%3E%3Cpath d='M8 15.5 16 9l8 6.5V23a1 1 0 0 1-1 1h-5v-6h-4v6H9a1 1 0 0 1-1-1z' fill='%236ee7b7'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">⌂</span>
+      <div>
+        <h1>CoolHome</h1>
+        <p class="subtitle">Умный дом на Tuya</p>
+      </div>
+    </div>
+    <div class="statusbar">
+      {{if .Demo}}<span class="badge" title="Демо-устройства, Tuya не используется">демо</span>{{end}}
+      <span id="sync" class="sync" role="status">Загрузка…</span>
+      <button id="customize" class="ghost" type="button" aria-pressed="false">Пульт</button>
+      <button id="refresh" class="ghost" type="button">Обновить</button>
+    </div>
+  </header>
+
+  <!-- Что сейчас включено. Панель над сеткой: на пульте нужно видеть
+       оставленный свет, не листая карточки. -->
+  <section id="active" class="active" aria-label="Сейчас включено" hidden>
+    <h2 class="active-title">
+      Сейчас включено <span id="active-count" class="active-count"></span>
+    </h2>
+    <ul id="active-list" class="active-list"></ul>
+  </section>
+
+  <main>
+    <div id="banner" class="banner" role="alert" hidden></div>
+    <section id="devices" class="grid" aria-label="Устройства"></section>
+    <p id="empty" class="empty" hidden>Устройства не найдены. Проверьте, что аккаунт приложения привязан к проекту Tuya.</p>
+  </main>
+
+  <!-- Настройки устройства. Модальное окно, а не выпадающая панель: панель
+       внутри карточки перекрывалась следующими карточками в потоке. -->
+  <dialog id="sheet" class="sheet" aria-labelledby="sheet-title">
+    <div class="sheet-head">
+      <h2 id="sheet-title" class="sheet-title"></h2>
+      <button type="button" class="ghost sheet-close" data-sheet="close" aria-label="Закрыть">✕</button>
+    </div>
+    <div id="sheet-body" class="sheet-body"></div>
+  </dialog>
+
+  <footer>
+    <p>Tuya Cloud OpenAPI · состояние обновляется автоматически</p>
+  </footer>
+
+  <script src="/static/power.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

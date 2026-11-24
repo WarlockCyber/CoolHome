@@ -1,0 +1,7 @@
+{
+  "navigationBarTitleText": "CoolHome",
+  "backgroundColor": "@bgColor",
+  "backgroundTextStyle": "@bgTxtStyle",
+  "enablePullDownRefresh": true,
+  "usingComponents": {}
+}

@@ -1,0 +1,769 @@
+:root {
+  color-scheme: dark;
+  --bg: #0e1116;
+  --bg-glow: #16202a;
+  --surface: #151b23;
+  --surface-raised: #1b232d;
+  --border: #27313d;
+  --border-strong: #33404f;
+  --text: #e9eef5;
+  --muted: #93a2b5;
+  --accent: #6ee7b7;
+  --accent-strong: #2fd39a;
+  --accent-dim: rgba(110, 231, 183, 0.14);
+  --danger: #f4776f;
+  --danger-dim: rgba(244, 119, 111, 0.14);
+  --radius: 18px;
+  --shadow: 0 18px 40px -28px rgba(0, 0, 0, 0.9);
+  --font: "Inter", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body { min-height: 100%; }
+
+body {
+  margin: 0;
+  font-family: var(--font);
+  color: var(--text);
+  background:
+    radial-gradient(60rem 30rem at 15% -10%, var(--bg-glow), transparent 60%),
+    radial-gradient(50rem 25rem at 100% 0%, rgba(110, 231, 183, 0.06), transparent 55%),
+    var(--bg);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+h1, h2, p { margin: 0; }
+
+/* ---------- top bar ---------- */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.1rem clamp(1rem, 4vw, 2.5rem);
+  background: rgba(14, 17, 22, 0.78);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand { display: flex; align-items: center; gap: 0.85rem; }
+
+.logo {
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: 14px;
+  background: linear-gradient(145deg, var(--accent-dim), transparent);
+  border: 1px solid rgba(110, 231, 183, 0.35);
+  color: var(--accent);
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+h1 { font-size: 1.2rem; font-weight: 650; letter-spacing: -0.01em; }
+
+.subtitle { color: var(--muted); font-size: 0.8rem; margin-top: 0.15rem; }
+
+.statusbar { display: flex; align-items: center; gap: 0.75rem; }
+
+.badge {
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid rgba(110, 231, 183, 0.4);
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.sync { color: var(--muted); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+
+.ghost {
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 0.5rem 0.95rem;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+}
+
+.ghost:hover { border-color: var(--accent); }
+.ghost:active { transform: translateY(1px); }
+
+/* ---------- layout ---------- */
+
+main {
+  flex: 1;
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: clamp(1.25rem, 3vw, 2.25rem) clamp(1rem, 4vw, 2.5rem);
+}
+
+.grid {
+  display: grid;
+  gap: clamp(0.9rem, 2vw, 1.35rem);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr));
+}
+
+.empty { color: var(--muted); text-align: center; padding: 3rem 1rem; }
+
+.banner {
+  margin-bottom: 1.25rem;
+  padding: 0.85rem 1.1rem;
+  border-radius: 12px;
+  border: 1px solid rgba(244, 119, 111, 0.4);
+  background: var(--danger-dim);
+  color: #ffd9d5;
+  font-size: 0.9rem;
+}
+
+/* ---------- card ---------- */
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 1.05rem;
+  padding: 1.25rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.035), transparent 42%),
+    var(--surface);
+  box-shadow: var(--shadow);
+  transition: border-color 160ms ease, transform 160ms ease;
+}
+
+.card:hover { border-color: var(--border-strong); }
+
+.card--offline { opacity: 0.62; }
+
+.card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; }
+
+.card-title { font-size: 1.02rem; font-weight: 620; letter-spacing: -0.01em; }
+
+.card-sub { color: var(--muted); font-size: 0.76rem; margin-top: 0.2rem; }
+
+.state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+  white-space: nowrap;
+  padding-top: 0.15rem;
+}
+
+.dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+
+.state--on .dot { background: var(--accent); box-shadow: 0 0 0 4px var(--accent-dim); }
+.state--off .dot { background: var(--danger); box-shadow: 0 0 0 4px var(--danger-dim); }
+
+/* ---------- controls ---------- */
+
+.controls { display: flex; flex-direction: column; gap: 0.95rem; }
+
+.row { display: flex; align-items: center; justify-content: space-between; gap: 0.9rem; }
+
+.row-label { font-size: 0.88rem; color: var(--text); }
+
+.row--slider { display: block; }
+
+/* Кнопка ИК-пульта: действие, а не состояние, поэтому без "активного" вида. */
+.press {
+  flex: 1;
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.55rem 0.9rem;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.press:hover:not(:disabled) { border-color: var(--border-strong); }
+.press:active:not(:disabled) { transform: translateY(1px); }
+.press:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.row-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.45rem;
+}
+
+.row-value {
+  color: var(--accent);
+  font-size: 0.86rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.switch {
+  flex: none;
+  position: relative;
+  width: 3.15rem;
+  height: 1.85rem;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-raised);
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+
+.switch .knob {
+  position: absolute;
+  top: 50%;
+  left: 0.2rem;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 50%;
+  background: #8fa0b3;
+  transform: translateY(-50%);
+  transition: left 160ms ease, background 160ms ease;
+}
+
+.switch[aria-checked="true"] {
+  background: linear-gradient(140deg, var(--accent), var(--accent-strong));
+  border-color: transparent;
+}
+
+.switch[aria-checked="true"] .knob { left: calc(100% - 1.55rem); background: #08130f; }
+
+.switch:disabled, .segmented button:disabled, input[type="range"]:disabled { cursor: not-allowed; }
+
+input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.segmented {
+  display: flex;
+  gap: 0.3rem;
+  padding: 0.25rem;
+  border-radius: 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+}
+
+.segmented button {
+  flex: 1;
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  padding: 0.45rem 0.5rem;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.segmented button:hover { color: var(--text); }
+
+.segmented button[aria-pressed="true"] {
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.readings {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr));
+  gap: 0.6rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid var(--border);
+}
+
+.reading { display: flex; flex-direction: column; gap: 0.2rem; }
+
+.reading-label { color: var(--muted); font-size: 0.72rem; }
+
+.reading-value {
+  font-size: 1.05rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.note { color: var(--muted); font-size: 0.78rem; line-height: 1.45; }
+
+footer {
+  padding: 1.5rem clamp(1rem, 4vw, 2.5rem) 2rem;
+  color: var(--muted);
+  font-size: 0.74rem;
+  text-align: center;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+
+/* ---------- remote (widget grid) ---------- */
+
+/* The remote is a phone-shaped grid of controls sized for a finger, not a list
+   of device cards. On a wall tablet the columns grow, the type stays legible
+   from a metre away. */
+.grid--remote {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 13rem), 1fr));
+  gap: clamp(1rem, 1.8vw, 1.5rem);
+}
+
+.widget {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  min-height: 9.5rem;
+  padding: clamp(1rem, 1.6vw, 1.35rem);
+  border-radius: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+
+.widget--wide { grid-column: span 2; }
+
+.widget-title {
+  font-size: clamp(1rem, 1.5vw, 1.2rem);
+  font-weight: 640;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.widget .row { gap: 0.75rem; }
+.widget .row--bare { justify-content: flex-start; }
+.widget .row--bare .switch { margin-left: 0; }
+
+/* A switch on the remote is the whole control: make it a big target. */
+.widget .switch {
+  width: 4.6rem;
+  height: 2.6rem;
+  border-radius: 999px;
+}
+
+.widget .press {
+  min-height: 3.4rem;
+  font-size: 1.02rem;
+  font-weight: 600;
+}
+
+.widget input[type="range"] { height: 2.2rem; }
+
+.widget--offline { opacity: 0.66; }
+
+.widget-off {
+  margin-top: auto;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.widget--missing { border-style: dashed; }
+
+.widget-note { color: var(--muted); font-size: 0.82rem; line-height: 1.4; margin-top: auto; }
+
+/* ---------- picker (add controls) ---------- */
+
+/* The add list lives in the modal, so only the list itself needs styling: the
+   old full-page editor is gone and its layout rules with it. */
+.picks { list-style: none; display: flex; flex-direction: column; gap: 0.5rem; }
+
+.pick {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.9rem;
+  padding: 0.7rem 0.9rem;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.pick-main { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.pick-name { font-size: 0.95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pick-sub { color: var(--muted); font-size: 0.78rem; }
+
+.pick-actions { display: flex; gap: 0.35rem; flex-shrink: 0; }
+
+.pick-actions .ghost {
+  min-width: 2.4rem;
+  padding: 0.4rem 0.55rem;
+  font-size: 0.95rem;
+}
+
+.ghost--danger:hover { border-color: var(--danger); color: #ffd9d5; }
+
+/* ---------- tablet remote ---------- */
+
+/* A wall tablet is landscape and viewed from a distance: fewer, bigger columns
+   and larger hit targets. */
+@media (min-width: 900px) and (pointer: coarse) {
+  main { max-width: 1800px; }
+  .grid--remote {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 15.5rem), 1fr));
+    gap: 1.5rem;
+  }
+  .widget { min-height: 11rem; }
+  .widget-title { font-size: 1.25rem; }
+  .widget .switch { width: 5.4rem; height: 3rem; }
+  .topbar { position: sticky; top: 0; z-index: 10; backdrop-filter: blur(8px); }
+}
+
+@media (max-width: 560px) {
+  .grid--remote { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .widget { min-height: 8rem; padding: 0.85rem; }
+  .widget--wide { grid-column: span 2; }
+  .widget-title { font-size: 0.95rem; }
+}
+
+/* A two-column widget has room: let the control use the width instead of
+   huddling on the left. */
+.widget--wide .row--bare { justify-content: flex-start; }
+.widget--wide .row--slider { width: 100%; }
+.widget--wide input[type="range"] { width: 100%; }
+
+/* Enum buttons inside a widget must not be clipped: a remote that hides
+   "закрыть" behind the card edge is worse than no remote. */
+.widget .segmented { flex-wrap: wrap; }
+.widget .segmented button { min-width: 2.9rem; padding: 0.5rem 0.35rem; }
+
+/* ---------- sensor widget ---------- */
+
+/* A temperature sensor is read from across the room: the figure is the widget,
+   the settings live in a modal. */
+.widget--sensor { min-height: 11rem; }
+
+.sensor-value {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  margin-top: 0.15rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.sensor-number {
+  font-size: clamp(2.6rem, 5vw, 3.6rem);
+  font-weight: 640;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: var(--text);
+}
+
+.sensor-unit {
+  font-size: clamp(1rem, 1.8vw, 1.3rem);
+  color: var(--muted);
+  font-weight: 500;
+}
+
+/* A button, not a disclosure: the settings open in a modal. */
+.widget-more {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+  padding: 0.6rem 0 0.15rem;
+  font: inherit;
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+  text-align: left;
+}
+
+.widget-more::before {
+  content: "⚙";
+  font-size: 0.95rem;
+  text-transform: none;
+}
+
+.widget-more:hover { color: var(--text); }
+.widget-more:active { transform: translateY(1px); }
+
+/* A sensor card in the plain list: the same big figure as on the remote, so a
+   sensor reads the same wherever it appears. */
+.card--sensor { gap: 0.9rem; }
+.card--sensor .sensor-value { margin-top: 0; }
+.card--sensor .widget-more { margin-top: 0.2rem; }
+
+/* ---------- settings modal ---------- */
+
+/* The settings are a modal, not a popover inside the card: an absolutely
+   positioned child cannot paint above the sibling cards that follow it in the
+   grid, which is what made the panel look transparent. */
+.sheet {
+  width: min(34rem, 92vw);
+  max-height: min(80vh, 46rem);
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 20px;
+  /* Opaque on purpose: a translucent panel over a dark house is unreadable. */
+  background: var(--surface-raised);
+  color: var(--text);
+  box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.95);
+  overflow: hidden;
+}
+
+.sheet::backdrop {
+  background: rgba(6, 9, 13, 0.72);
+  backdrop-filter: blur(3px);
+}
+
+.sheet[open] {
+  display: flex;
+  flex-direction: column;
+  animation: sheet-in 140ms ease-out;
+}
+
+@keyframes sheet-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.99); }
+  to { opacity: 1; transform: none; }
+}
+
+.sheet-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.15rem 1.25rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.sheet-title {
+  font-size: 1.1rem;
+  font-weight: 640;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.sheet-close {
+  min-width: 2.4rem;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.sheet-body {
+  padding: 1rem 1.25rem 1.35rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.sheet-figure { margin: 0; }
+
+.sheet-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+/* Room for a finger: the modal is used on a tablet as much as a desktop. */
+.sheet-controls .switch { width: 3.6rem; height: 2.1rem; }
+.sheet-controls input[type="range"] { height: 2.1rem; }
+.sheet-controls .segmented { flex-wrap: wrap; }
+.sheet-controls .segmented button { min-height: 2.5rem; }
+
+@media (max-width: 560px) {
+  .sensor-number { font-size: 2.4rem; }
+  .sheet { width: 96vw; max-height: 88vh; border-radius: 16px; }
+  .sensor-value { gap: 0.25rem; }
+}
+
+/* ---------- editing in place ---------- */
+
+/* A slot holds a widget plus the small controls that appear while editing. The
+   widget keeps its grid span; the controls sit in a bar under it. */
+.slot { display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; }
+.slot > .widget { flex: 1; }
+
+.widget-edit {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.3rem;
+}
+
+.widget-edit button {
+  font: inherit;
+  font-size: 0.8rem;
+  line-height: 1;
+  padding: 0.45rem 0.2rem;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.widget-edit button:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
+.widget-edit button:disabled { opacity: 0.35; cursor: default; }
+.widget-edit .danger:hover:not(:disabled) { border-color: var(--danger); color: #ffd9d5; }
+
+/* The add tile: same footprint as a widget so the grid rhythm holds. */
+.widget--add {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  min-height: 9.5rem;
+  border: 1px dashed var(--border-strong);
+  border-radius: 20px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.widget--add:hover { border-color: var(--accent); color: var(--text); }
+.add-plus { font-size: 1.9rem; line-height: 1; }
+.add-label { font-size: 0.8rem; letter-spacing: 0.06em; text-transform: uppercase; }
+
+/* While editing, a widget must not react to its own controls: a tap meant for ✕
+   could otherwise flip a switch. */
+.grid--editing .widget .controls,
+.grid--editing .widget .readings,
+.grid--editing .widget .segmented,
+.grid--editing .widget .switch,
+.grid--editing .widget input[type="range"],
+.grid--editing .widget .widget-more {
+  pointer-events: none;
+}
+
+.grid--editing .widget { border-color: var(--border-strong); }
+
+.sheet-picker .picks { max-height: none; }
+
+.add-hint {
+  grid-column: 1 / -1;
+  margin-top: 0.4rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* ---------- what is on right now ---------- */
+
+/* A strip above the grid: the point is to see the light somebody left on
+   without scrolling the wall. */
+.active {
+  width: 100%;
+  max-width: 1800px;
+  margin: 0 auto;
+  padding: clamp(0.75rem, 2vw, 1.1rem) clamp(1rem, 4vw, 2.5rem) 0;
+}
+
+.active-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.76rem;
+  font-weight: 620;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.6rem;
+}
+
+.active-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.5rem;
+  height: 1.5rem;
+  padding: 0 0.45rem;
+  border-radius: 999px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-size: 0.78rem;
+  letter-spacing: 0;
+}
+
+.active-list {
+  list-style: none;
+  display: flex;
+  gap: 0.6rem;
+  overflow-x: auto;
+  padding-bottom: 0.35rem;
+  scrollbar-width: thin;
+}
+
+.chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  min-width: 8.5rem;
+  padding: 0.55rem 0.85rem;
+  border-radius: 12px;
+  border: 1px solid rgba(110, 231, 183, 0.35);
+  background: var(--accent-dim);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.chip:hover { border-color: var(--accent); }
+.chip:active { transform: translateY(1px); }
+
+.chip-name {
+  font-size: 0.92rem;
+  font-weight: 580;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chip-sub {
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+@media (max-width: 560px) {
+  .chip { min-width: 7.5rem; padding: 0.5rem 0.7rem; }
+  .chip-name { max-width: 8rem; }
+}

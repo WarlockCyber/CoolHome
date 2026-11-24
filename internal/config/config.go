@@ -1,0 +1,162 @@
+// Package config loads runtime configuration from the environment.
+package config
+
+import (
+	"fmt"
+	"net/url"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/WarlockCyber/CoolHome/internal/tuya"
+)
+
+// Config is the full application configuration.
+type Config struct {
+	Addr         string
+	Demo         bool
+	AuthToken    string
+	PollInterval time.Duration
+	DeviceIDs    []string
+	// AllowedOrigins enables CORS for browser clients such as a Tuya mini-app.
+	AllowedOrigins []string
+	// IR enables the infrared provider: remotes stored on a blaster appear as
+	// devices whose functions are buttons. Requires the IR Control service to
+	// be subscribed in the Tuya console.
+	IR bool
+	// IRBlasters pins the blaster device ids. Empty means discover them.
+	IRBlasters []string
+	// Scenes enables the scene provider: tap-to-run scenes appear as devices
+	// with one button. This is the only supported way to run an action the
+	// data-point API cannot perform, such as a learned RF key.
+	Scenes bool
+	// SpaceID pins the home/space the scene API is addressed by. Empty means
+	// discover it from the account's devices.
+	SpaceID string
+	// DashboardFile persists which controls the remote shows. Empty keeps the
+	// layout in memory only.
+	DashboardFile string
+	Tuya          tuya.Config
+}
+
+// Load reads configuration from the environment, applying defaults.
+func Load() (Config, error) {
+	get := os.Getenv
+
+	cfg := Config{
+		Addr:           strings.TrimSpace(get("COOLHOME_ADDR")),
+		AuthToken:      get("COOLHOME_AUTH_TOKEN"),
+		DeviceIDs:      splitList(get("COOLHOME_DEVICE_IDS")),
+		AllowedOrigins: splitList(get("COOLHOME_ALLOWED_ORIGINS")),
+	}
+	if cfg.Addr == "" {
+		cfg.Addr = "127.0.0.1:8080"
+	}
+
+	if raw := strings.TrimSpace(get("COOLHOME_IR")); raw != "" {
+		enabled, err := strconv.ParseBool(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("config: COOLHOME_IR=%q is not a boolean", raw)
+		}
+		cfg.IR = enabled
+	}
+	cfg.IRBlasters = splitList(get("COOLHOME_IR_BLASTERS"))
+	cfg.SpaceID = strings.TrimSpace(get("COOLHOME_SPACE_ID"))
+	cfg.DashboardFile = strings.TrimSpace(get("COOLHOME_DASHBOARD_FILE"))
+
+	if raw := strings.TrimSpace(get("COOLHOME_SCENES")); raw != "" {
+		enabled, err := strconv.ParseBool(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("config: COOLHOME_SCENES=%q is not a boolean", raw)
+		}
+		cfg.Scenes = enabled
+	}
+
+	if raw := strings.TrimSpace(get("COOLHOME_DEMO")); raw != "" {
+		demo, err := strconv.ParseBool(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("config: COOLHOME_DEMO=%q is not a boolean", raw)
+		}
+		cfg.Demo = demo
+	}
+
+	cfg.PollInterval = 10 * time.Second
+	if raw := strings.TrimSpace(get("COOLHOME_POLL_INTERVAL")); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("config: COOLHOME_POLL_INTERVAL=%q: %w", raw, err)
+		}
+		if d < time.Second {
+			return Config{}, fmt.Errorf("config: COOLHOME_POLL_INTERVAL must be at least 1s")
+		}
+		cfg.PollInterval = d
+	}
+
+	region := strings.TrimSpace(get("TUYA_REGION"))
+	if region == "" {
+		region = "eu"
+	}
+	cfg.Tuya = tuya.Config{
+		ClientID: strings.TrimSpace(get("TUYA_CLIENT_ID")),
+		Secret:   strings.TrimSpace(get("TUYA_CLIENT_SECRET")),
+		Region:   region,
+		BaseURL:  strings.TrimSpace(get("TUYA_BASE_URL")),
+		UID:      strings.TrimSpace(get("TUYA_UID")),
+	}
+
+	for _, origin := range cfg.AllowedOrigins {
+		if err := validateOrigin(origin); err != nil {
+			return Config{}, fmt.Errorf("config: COOLHOME_ALLOWED_ORIGINS: %w", err)
+		}
+	}
+
+	return cfg, nil
+}
+
+// validateOrigin accepts "*" or an absolute http(s) origin with no path, so a
+// pasted URL with a route is caught at startup instead of silently never
+// matching the Origin header the browser sends.
+func validateOrigin(origin string) error {
+	if origin == "*" {
+		return nil
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return fmt.Errorf("%q is not a valid origin: %w", origin, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("%q must start with http:// or https://", origin)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("%q has no host", origin)
+	}
+	if u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("%q must be an origin only, without path, query or credentials (want e.g. https://example.com)", origin)
+	}
+	return nil
+}
+
+// Validate checks the configuration after command-line overrides are applied.
+func (c Config) Validate() error {
+	if c.Demo {
+		return nil
+	}
+	if c.Tuya.ClientID == "" || c.Tuya.Secret == "" {
+		return fmt.Errorf("config: TUYA_CLIENT_ID and TUYA_CLIENT_SECRET are required (or run with -demo / COOLHOME_DEMO=true)")
+	}
+	return nil
+}
+
+func splitList(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
