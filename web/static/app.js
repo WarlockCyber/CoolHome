@@ -16,6 +16,8 @@
     va_temperature: 'Температура',
     va_humidity: 'Влажность',
     humidity: 'Влажность',
+    // Humidity as the thing model spells it (v2 models, not the legacy spec).
+    humidity_value: 'Влажность',
     battery_percentage: 'Заряд батареи',
     percent_control: 'Открытие',
     control: 'Управление',
@@ -51,11 +53,81 @@
     battery_state: 'Состояние батареи',
     upper_temp_f: 'Верхний порог °F',
     lower_temp_f: 'Нижний порог °F',
+    // Settings behind a plug's card. They are readable now that the card itself
+    // only carries the on/off state.
+    relay_status: 'Состояние после включения',
+    light_mode: 'Подсветка кнопки',
+    overcharge_switch: 'Защита от перегрузки',
+    cycle_time: 'Цикл вкл/выкл',
+    random_time: 'Случайная задержка',
+    switch_inching: 'Импульсный режим',
+    online_state: 'Сеть',
+    switch_type: 'Тип реле',
+    switch_interlock: 'Блокировка реле',
+    alarm_set_1: 'Сигнал 1',
+    alarm_set_2: 'Сигнал 2',
+    charge_energy: 'Заряд энергии',
+    remote_add: 'Пульт',
+    remote_list: 'Пульты',
+    holiday_days_set: 'Дней отпуска',
+    countdown_set: 'Таймер',
+    // Electrical readings of a metering plug.
+    add_ele: 'Израсходовано',
+    cur_current: 'Ток',
+    cur_power: 'Мощность',
+    cur_voltage: 'Напряжение',
+    total_energy: 'Всего энергии',
+    voltage_coe: 'Коэффициент напряжения',
+    electric_coe: 'Коэффициент тока',
+    power_coe: 'Коэффициент мощности',
+    electricity_coe: 'Коэффициент учёта',
+    fault: 'Неисправность',
     // A learned RF switch exposes one key; the cloud calls it "one ON", which
     // says nothing about what the physical remote's button does (usually a
     // toggle), so the label stays neutral.
     one_on: 'Кнопка',
+    // Thermostats paired through a gateway describe themselves through the
+    // thing model, where every protection setting arrives under its protocol
+    // code. Without names these read as a dump: "ovp", "ocp", "cryogenic".
+    heating_temp_start: 'Старт нагрева',
+    heating_temp_stop: 'Стоп нагрева',
+    cryogenic_temp_start: 'Старт охлаждения',
+    cryogenic_temp_stop: 'Стоп охлаждения',
+    temp_calibration: 'Калибровка',
+    ovp: 'Защита: напряжение',
+    ocp: 'Защита: ток',
+    opp: 'Защита: мощность',
+    lvp: 'Защита: низкое напряжение',
+    over_protect_enable: 'Защита от перегрузки',
+    over_protect_time: 'Время защиты',
+    real_time_swith_1s_60s: 'Обновление в реальном времени',
+    over_time: 'Задержка перегрева',
+    warning: 'Предупреждение',
+    total_electricity: 'Всего энергии',
+    electricity_price: 'Цена энергии',
+    cost: 'Стоимость',
+    sensor_detection_flag: 'Датчик температуры',
+    countdown_recovery: 'Возврат таймера',
   };
+
+  // Some enums use numeric option values whose meaning depends on the data
+  // point: relay_status 0/1/2 is off/on/remember, while level 1/2 is just a
+  // number. A global map on the raw value would mistranslate one of them.
+  const OPTION_LABELS = {
+    relay_status: { 0: 'выкл', 1: 'вкл', 2: 'как было' },
+    // Celsius/fahrenheit as a sensor reports the setting, not as a letter.
+    temp_unit_convert: { c: '°C', f: '°F' },
+    switch_type: { flip: 'переключатель', sync: 'синхронно', button: 'кнопка' },
+    light_mode: { relay: 'реле', pos: 'положение', none: 'выкл' },
+  };
+
+  function optionLabel(point, option) {
+    const byCode = OPTION_LABELS[point && point.code];
+    if (byCode && Object.prototype.hasOwnProperty.call(byCode, option)) {
+      return byCode[option];
+    }
+    return VALUE_LABELS[option] || String(option);
+  }
 
   const VALUE_LABELS = {
     white: 'белый',
@@ -68,6 +140,28 @@
     off: 'выкл',
     auto: 'авто',
     manual: 'вручную',
+    // Relay behaviour after a power cut.
+    power_off: 'выкл',
+    power_on: 'вкл',
+    last: 'как было',
+    memory: 'как было',
+    off_remember: 'как было',
+    // Indicator light of a plug's button.
+    relay: 'реле',
+    pos: 'положение',
+    none: 'выкл',
+    // Relay modes and countdown presets.
+    flip: 'переключатель',
+    sync: 'синхронно',
+    button: 'кнопка',
+    online: 'в сети',
+    offline: 'не в сети',
+    '1h': '1 ч',
+    '2h': '2 ч',
+    '3h': '3 ч',
+    '4h': '4 ч',
+    '5h': '5 ч',
+    '6h': '6 ч',
     // Values sensors and thermostats report: without these the panel shows a
     // protocol token ("cancel", "middle") where a word belongs.
     cancel: 'нет',
@@ -77,9 +171,19 @@
     high: 'высокий',
     comfort: 'комфорт',
     eco: 'эко',
+    // Work modes of a thermostat behind a gateway.
+    socket: 'розетка',
+    hot: 'нагрев',
+    colding: 'охлаждение',
     frost: 'антизаморозка',
     normal: 'норма',
   };
+
+  // The bundle this page was rendered from. The server reports its own on every
+  // poll; when they differ, a restart brought new code and the page reloads.
+  // Without this a dashboard left open on a wall keeps running the interface it
+  // was loaded with, and a fixed card goes on looking broken for days.
+  const BUILD = (document.querySelector('meta[name="coolhome-build"]') || {}).content || '';
 
   const state = {
     devices: [],
@@ -102,6 +206,9 @@
     // The add-controls picker shares the modal; this flag says which of the two
     // the modal currently shows.
     picker: false,
+    // Which tab is shown. Scenes live on their own: they are actions without a
+    // state, and mixed into the grid they only got in the way of the lights.
+    tab: 'devices',
     saving: false,
     token: localStorage.getItem(TOKEN_KEY) || '',
     suspendUntil: 0,
@@ -110,6 +217,8 @@
 
   const els = {
     grid: document.getElementById('devices'),
+    scenes: document.getElementById('scenes'),
+    tabs: document.querySelectorAll('[data-tab]'),
     sync: document.getElementById('sync'),
     banner: document.getElementById('banner'),
     empty: document.getElementById('empty'),
@@ -164,6 +273,12 @@
       }
       state.lastSync = data.last_sync || null;
       state.error = data.error || '';
+      // A reload mid-edit would throw away an unsaved layout, so it waits for
+      // the user to leave the editor; the next poll tries again.
+      if (data.build && BUILD && data.build !== BUILD && !state.editMode && !state.sheet && !state.picker) {
+        location.reload();
+        return;
+      }
     } catch (err) {
       state.error = err.message;
       if (!silent) console.error(err);
@@ -231,6 +346,22 @@
       "'": '&#39;',
     }[c]));
 
+  // pointLabel names a data point in the context of its device. A two-gang
+  // switch has switch_1 and switch_2, and calling them both "Питание" makes the
+  // settings list unusable; the key number is the only thing that tells them
+  // apart.
+  function pointLabel(point, device) {
+    const code = String(point.code || '');
+    const relays = (device && device.functions ? device.functions : []).filter((f) =>
+      /^switch_\d+$/.test(f.code),
+    );
+    let m = /^switch_(\d+)$/.exec(code);
+    if (m && relays.length > 1) return 'Клавиша ' + m[1];
+    m = /^countdown_(\d+)$/.exec(code);
+    if (m && relays.length > 1) return 'Таймер ' + m[1];
+    return label(point);
+  }
+
   function label(point) {
     // Tuya reports the data-point code in `name` for some products, so a name
     // equal to the code is no name at all and the dictionary wins.
@@ -295,9 +426,28 @@
     if (state.picker) renderPicker();
     else if (state.sheet) renderSheet();
 
+    // Scenes have their own tab. They are filtered out of the device grid and
+    // the remote editor: a scene is a button, not a device with a state, and
+    // mixing them made both lists worse.
+    const scenes = state.devices.filter(isScene);
+    const devices = state.devices.filter((d) => !isScene(d));
+    els.scenes.innerHTML = scenes.map(card).join('');
+
+    const tabs = { devices: 'devices', scenes: 'scenes' };
+    for (const name of Object.keys(tabs)) {
+      const on = state.tab === name;
+      const panel = name === 'devices' ? els.grid : els.scenes;
+      panel.hidden = !on;
+      const btn = document.getElementById('tab-' + name);
+      if (btn) btn.setAttribute('aria-selected', on ? 'true' : 'false');
+    }
+    // The "nothing here" hint belongs to the devices tab, which is the one that
+    // shows the whole house.
+    const onDevices = state.tab === 'devices';
+
     // The remote is edited in place: the grid is the editor. Adding happens
     // from the tile at the end, removing from each card's own ✕.
-    if (state.layout.length > 0 || state.editMode) {
+    if (onDevices && (state.layout.length > 0 || state.editMode)) {
       const total = state.layout.length;
       const widgets = state.layout
         .map((w, i) => {
@@ -307,13 +457,14 @@
         .join('');
       els.grid.innerHTML = widgets + (state.editMode ? addTile() : '');
       els.grid.classList.add('grid--remote');
-    } else {
-      els.grid.innerHTML = state.devices.map(card).join('');
+    } else if (onDevices) {
+      els.grid.innerHTML = devices.map(card).join('');
       els.grid.classList.remove('grid--remote');
     }
     renderActive();
     els.grid.classList.toggle('grid--editing', state.editMode);
-    els.empty.hidden = state.editMode || state.devices.length > 0 || Boolean(state.error);
+    els.empty.hidden =
+      !onDevices || state.editMode || devices.length > 0 || scenes.length > 0 || Boolean(state.error);
     els.customize.textContent = state.editMode ? 'Готово' : 'Изменить';
     els.customize.setAttribute('aria-pressed', state.editMode ? 'true' : 'false');
 
@@ -333,7 +484,12 @@
 
   // The rule for "switched on" lives in power.js so it can be tested without a
   // browser; see the comment there for why not every true boolean counts.
-  const power = window.CoolHomePower || { isPowerCode: () => false, powerCode: () => null };
+  const power = window.CoolHomePower || {
+    isPowerCode: () => false,
+    isOn: () => false,
+    powerCode: () => null,
+    powerCard: () => null,
+  };
 
   // powerState returns the switch a device is currently on with, or null. A
   // device with several relays counts only if at least one of them is on.
@@ -383,25 +539,12 @@
       .join('');
   }
 
-  // The point that carries the measured temperature. Tuya uses two names for
-  // it and reports the unit three ways ("℃", "°C", "摄氏度") or not at all, so
-  // the code is what identifies it, not the unit.
-  const TEMPERATURE_CODES = ['temp_current', 'va_temperature'];
-
-  function isTemperatureCode(code) {
-    // A "temp_current_f" is the same reading in Fahrenheit: showing it beside
-    // the Celsius value would double every sensor on the wall.
-    if (String(code).endsWith('_f')) return false;
-    return TEMPERATURE_CODES.indexOf(String(code)) >= 0;
-  }
-
-  // isTemperaturePoint identifies the measured temperature by its code alone.
-  // The unit cannot decide this: set-points ("maxtemp_set", "upper_temp") are
-  // reported in the same Celsius unit, and treating them as sensors put the
-  // same control on the wall twice — once as a figure, once as a slider.
-  function isTemperaturePoint(point) {
-    return Boolean(point) && isTemperatureCode(point.code);
-  }
+  // Which readings become figures, and why by code rather than by unit, lives
+  // in figures.js: the rule is small enough to look right while being wrong, so
+  // it is tested outside the browser.
+  const figures = window.CoolHomeFigures;
+  const isTemperaturePoint = figures.isTemperaturePoint;
+  const isHumidityPoint = figures.isHumidityPoint;
 
   // temperatureUnit normalises Tuya's spellings to one symbol.
   function temperatureUnit(point) {
@@ -410,9 +553,14 @@
     return '°C';
   }
 
-  // temperatureNumber renders the value alone, without the unit: the unit sits
-  // beside it in smaller type, so a single string would set both at one size.
-  function temperatureNumber(raw, point) {
+  // figureNumber renders a reading's value alone, without the unit: the unit
+  // sits beside it in smaller type, so a single string would set both at one
+  // size. It is shared by the temperature and the humidity figures.
+  function figureNumber(raw, point) {
+    // A point declared but not yet reported arrives as null. Number(null) is 0,
+    // which would put a plausible "0 %" on the wall where the settings row says
+    // "—"; an unreported value must look unreported.
+    if (raw === null || raw === undefined || raw === '') return '—';
     const n = asNumber(raw);
     if (n === null) return '—';
     const scale = Number(point && point.scale) || 0;
@@ -630,8 +778,15 @@
         // A scene's function is named after the scene, so repeating the label
         // under the title says nothing. Name the kind instead.
         const kind = String(c.point.type || '').toLowerCase();
+        // A sensor widget now draws both numbers of a temperature-and-humidity
+        // device, so naming only the temperature understates what gets added.
+        const paired =
+          c.sensor &&
+          state.devices.some((d) => d.id === c.device_id && figurePoints(d).humid);
         const sub =
-          kind === 'button' ? (c.device_category === 'scene' ? 'Сцена' : 'Кнопка') : label(c.point);
+          kind === 'button'
+            ? c.device_category === 'scene' ? 'Сцена' : 'Кнопка'
+            : paired ? 'Температура и влажность' : label(c.point);
         return (
           '<li class="pick">' +
             '<div class="pick-main">' +
@@ -702,29 +857,86 @@
   // devicePanel renders everything a device can offer except the reading that
   // is already shown large: the other measurements, then the writable controls.
   // Fahrenheit duplicates are dropped for the same reason as on the remote.
-  function devicePanel(device, values, excludeCode) {
-    const parts = [];
-    const fnCodes = new Set((device.functions || []).map((f) => f.code));
-    for (const r of device.readings || []) {
-      if (r.code === excludeCode) continue;
-      if (String(r.code).endsWith('_f')) continue;
-      if (fnCodes.has(r.code)) continue;
-      parts.push(reading(r, values[r.code]));
-    }
+  // Calibration coefficients are constants a technician reads once; listing them
+  // above a plug's switch buries what the panel was opened for.
+  function isCalibration(code) {
+    const c = String(code);
+    return /_coe$/.test(c) || c === 'fault' || c === 'test_bit';
+  }
+
+  // devicePanel renders a device's settings. Order depends on what the panel is
+  // for: a plug is opened to change something, so its switch goes first; a
+  // sensor is opened to read humidity and battery beside the temperature, so
+  // its readings stay on top.
+  function devicePanel(device, values, excludeCodes, controlsFirst) {
+    // What is already drawn as a figure above must not be drawn again as a row:
+    // a temperature-and-humidity sensor shows both on the card, so both leave
+    // the panel.
+    const skip = new Set(excludeCodes || []);
+    const controls = [];
     for (const f of device.functions || []) {
       if (String(f.code).endsWith('_f')) continue;
       const html = control(device, f, values[f.code], {});
-      if (html) parts.push(html);
+      if (html) controls.push(html);
     }
-    return parts.join('');
+
+    const fnCodes = new Set((device.functions || []).map((f) => f.code));
+    const readings = [];
+    for (const r of device.readings || []) {
+      if (skip.has(r.code)) continue;
+      if (String(r.code).endsWith('_f')) continue;
+      if (isCalibration(r.code)) continue;
+      if (fnCodes.has(r.code)) continue;
+      readings.push(reading(r, values[r.code]));
+    }
+
+    return (controlsFirst ? controls.concat(readings) : readings.concat(controls)).join('');
   }
 
-  // sensorBody is the big figure plus the disclosure that holds everything
-  // else. Shared by the card list and the hand-placed widget so a sensor looks
-  // the same either way.
+  // figurePoints answers "does this device have figures, and of what kind" for
+  // callers that only need to know (the widget picker, the card's layout).
+  function figurePoints(device) {
+    return figures.figurePoints(device);
+  }
+
+  // humidityUnit keeps the cloud's "%" but never shows an empty label where a
+  // reading has no unit of its own.
+  function humidityUnit(point) {
+    const unit = String((point && point.unit) || '');
+    return unit || '%';
+  }
+
+  // sensorFigures draws the numbers themselves and reports which codes it drew.
+  // Returning both is what keeps the card and the settings panel in step: the
+  // panel skips exactly what was drawn, so no value can be lost between them.
+  function sensorFigures(device, values) {
+    const picked = figures.figures(device);
+    const codes = picked.codes.slice();
+    if (!picked.temp) return { html: '', codes };
+    const main =
+      '<div class="sensor-value">' +
+        '<span class="sensor-number">' + esc(figureNumber(values[picked.temp.code], picked.temp)) + '</span>' +
+        '<span class="sensor-unit">' + esc(temperatureUnit(picked.temp)) + '</span>' +
+      '</div>';
+    if (!picked.humid) return { html: '<div class="sensor-readings">' + main + '</div>', codes };
+    const side =
+      '<div class="sensor-side">' +
+        '<span class="sensor-side-label">Влажность</span>' +
+        '<div class="sensor-value">' +
+          '<span class="sensor-number">' + esc(figureNumber(values[picked.humid.code], picked.humid)) + '</span>' +
+          '<span class="sensor-unit">' + esc(humidityUnit(picked.humid)) + '</span>' +
+        '</div>' +
+      '</div>';
+    return { html: '<div class="sensor-readings">' + main + side + '</div>', codes };
+  }
+
+  // sensorBody is the figures plus the disclosure that holds everything else.
+  // Shared by the card list, the hand-placed widget and the settings modal so a
+  // sensor looks the same everywhere.
   function sensorBody(device, readingPoint, values) {
-    const key = device.id + ':' + readingPoint.code;
-    const panel = devicePanel(device, values, readingPoint.code);
+    const drawn = sensorFigures(device, values);
+    if (readingPoint && drawn.codes.indexOf(readingPoint.code) < 0) drawn.codes.push(readingPoint.code);
+    const panel = devicePanel(device, values, drawn.codes, false);
     // The settings open in a modal, so this is a plain button: a disclosure
     // inside a card cannot escape the card's stacking context, and the next
     // cards in the grid painted over it.
@@ -733,15 +945,58 @@
           ' data-code="' + esc(readingPoint.code) + '"' +
           ' aria-haspopup="dialog">Настройки</button>'
       : '';
+    return drawn.html + more;
+  }
+
+  // powerBody is the whole card of a plug or a switch: the state of each key,
+  // the switches, and a way into the settings. A plug exposes nine controls —
+  // countdown, relay mode, indicator light, child lock, over-charge protection —
+  // and none of them belong on a wall; the on/off does.
+  //
+  // A multi-gang switch gets one row per key, because they are separate lights
+  // and the wall has a separate button for each.
+  function powerBody(device, codes, values) {
+    const name = device.name || device.id;
+    const many = codes.length > 1;
+    const rows = codes
+      .map((code, i) => {
+        const on = power.isOn(values[code]);
+        const what = many ? 'Клавиша ' + (i + 1) : name;
+        const state = on ? 'Включено' : 'Выключено';
+        return (
+          '<div class="power-state' + (on ? ' power-state--on' : '') + '">' +
+            '<span class="power-label">' + (many ? esc(what) + ' · ' + state : state) + '</span>' +
+            '<button type="button" class="switch' + (many ? '' : ' switch--xl') + '" role="switch"' +
+              ' aria-checked="' + on + '" aria-label="' + esc(what + ': ' + state) + '"' +
+              ' data-action="toggle" data-id="' + esc(device.id) + '"' +
+              ' data-code="' + esc(code) + '"' +
+              (device.online ? '' : ' disabled') + '>' +
+              '<span class="knob"></span>' +
+            '</button>' +
+          '</div>'
+        );
+      })
+      .join('');
     return (
-      '<div class="sensor-value">' +
-        '<span class="sensor-number">' +
-          esc(temperatureNumber(values[readingPoint.code], readingPoint)) +
-        '</span>' +
-        '<span class="sensor-unit">' + esc(temperatureUnit(readingPoint)) + '</span>' +
-      '</div>' +
-      more
+      '<div class="power-rows">' + rows + '</div>' +
+      '<button type="button" class="widget-more" data-more="' + esc(device.id) + '"' +
+        ' data-code="" aria-haspopup="dialog">Настройки</button>'
     );
+  }
+
+  // isScene marks a tap-to-run scene: a button the cloud runs, with no state of
+  // its own. Everything else is a device.
+  function isScene(device) {
+    return String(device.category || '') === 'scene';
+  }
+
+  // categoryLabel names the categories CoolHome itself introduces, and leaves
+  // the product name alone where the cloud supplies one.
+  function categoryLabel(device) {
+    const category = String(device.category || '');
+    if (category === 'scene') return 'Сценарий';
+    if (category === 'ir_remote') return 'ИК-пульт';
+    return category;
   }
 
   function card(device) {
@@ -763,9 +1018,19 @@
     );
     const sensor = Boolean(tempPoint);
 
+    // A plug or a plain switch collapses to its power state. A thermostat keeps
+    // its card: it has a set-point worth seeing. A multi-gang strip keeps its
+    // individual switches, because powerCard refuses to pick one of them.
+    const powerCodes = sensor ? null : power.powerCard(device);
+    const powerOnly = Boolean(powerCodes && powerCodes.length);
+
     const hasPassive = functions.some((f) => String(f.type || '').toLowerCase() === 'passive');
+    // A scene always keeps its button, so the "no controls" rule never fires for
+    // it — and a scene switched off in the Tuya app then showed as a grey
+    // "Запустить" with no reason given. Its note says why.
+    const sceneNote = isScene(device) && Boolean(device.note);
     const note =
-      (!sensor && !controls && !readings) || hasPassive
+      sceneNote || (!sensor && !powerOnly && !controls && !readings) || hasPassive
         ? '<p class="note">' + esc(noteFor(device)) + '</p>'
         : '';
 
@@ -774,18 +1039,22 @@
 
     return (
       '<article class="card' + (sensor ? ' card--sensor' : '') +
+        (powerOnly ? ' card--power' : '') +
+        (isScene(device) ? ' card--scene' : '') +
         (device.online ? '' : ' card--offline') + '">' +
         '<div class="card-head">' +
           '<div>' +
             '<h2 class="card-title">' + esc(device.name || device.id) + '</h2>' +
-            '<p class="card-sub">' + esc(device.product || device.category || 'устройство') + '</p>' +
+            '<p class="card-sub">' + esc(device.product || categoryLabel(device) || 'устройство') + '</p>' +
           '</div>' +
           '<span class="state ' + stateClass + '"><span class="dot"></span>' + stateText + '</span>' +
         '</div>' +
         (sensor
           ? sensorBody(device, tempPoint, values)
-          : (controls ? '<div class="controls">' + controls + '</div>' : '') +
-            (readings ? '<div class="readings">' + readings + '</div>' : '')) +
+          : powerOnly
+            ? powerBody(device, powerCodes, values)
+            : (controls ? '<div class="controls">' + controls + '</div>' : '') +
+              (readings ? '<div class="readings">' + readings + '</div>' : '')) +
         note +
       '</article>'
     );
@@ -798,7 +1067,9 @@
     const options = opts || {};
     const type = String(point.type || '').toLowerCase();
     const disabled = device.online ? '' : ' disabled';
-    const name = esc(options.label !== undefined ? options.label : label(point));
+    const name = esc(
+      options.label !== undefined ? options.label : pointLabel(point, device),
+    );
     const dataAttrs =
       ' data-id="' + esc(device.id) + '" data-code="' + esc(point.code) + '"';
 
@@ -842,10 +1113,13 @@
     // An infrared remote key: a momentary action, not a state. It is rendered
     // as a plain button and always writes true ("press").
     if (type === 'button') {
+      // The card title already carries the scene's name; repeating it on the
+      // button says nothing about what pressing will do.
+      const caption = options.label !== undefined ? options.label : 'Запустить';
       return (
         '<div class="row' + (options.bare ? ' row--bare' : '') + '">' +
           '<button type="button" class="press" data-action="press"' + dataAttrs + disabled + '>' +
-            name +
+            esc(caption) +
           '</button>' +
         '</div>'
       );
@@ -858,7 +1132,7 @@
           return (
             '<button type="button" aria-pressed="' + active + '"' +
               ' data-action="set" data-value="' + esc(opt) + '"' + dataAttrs + disabled + '>' +
-              esc(VALUE_LABELS[opt] || opt) +
+              esc(optionLabel(point, opt)) +
             '</button>'
           );
         })
@@ -1049,14 +1323,11 @@
     }
     const values = Object.fromEntries((device.status || []).map((s) => [s.code, s.value]));
     const point = (device.readings || []).find((r) => r.code === state.sheet.code);
-    const unit = point ? temperatureUnit(point) : '';
-    const figure = point
-      ? '<div class="sensor-value sheet-figure">' +
-          '<span class="sensor-number">' + esc(temperatureNumber(values[point.code], point)) + '</span>' +
-          '<span class="sensor-unit">' + esc(unit) + '</span>' +
-        '</div>'
-      : '';
-    const panel = devicePanel(device, values, state.sheet.code);
+    // The modal repeats the card's figures rather than a single one: opening a
+    // sensor must not lose the humidity that was just visible on the wall.
+    const drawn = sensorFigures(device, values);
+    const figure = drawn.html ? '<div class="sheet-figure">' + drawn.html + '</div>' : '';
+    const panel = devicePanel(device, values, drawn.codes, !point);
     els.sheetTitle.textContent = device.name || device.id;
     els.sheetBody.innerHTML =
       figure +
@@ -1134,6 +1405,46 @@
     if (point) out.textContent = format(Number(input.value), point);
   });
 
+  // ---------- tabs ----------
+
+  function selectTab(name) {
+    if (name !== 'devices' && name !== 'scenes') return;
+    state.tab = name;
+    // Editing lives on the devices tab; leaving it must not leave the grid in a
+    // half-edited state.
+    if (name !== 'devices' && state.editMode) stopEditing();
+    render();
+    // Keep the address in step so a reload returns to the same tab.
+    const url = new URL(location.href);
+    if (name === 'scenes') url.searchParams.set('tab', 'scenes');
+    else url.searchParams.delete('tab');
+    history.replaceState(null, '', url);
+  }
+
+  for (const btn of els.tabs) {
+    btn.addEventListener('click', () => selectTab(btn.dataset.tab));
+  }
+
+  // A scene is a button: pressing it runs it. No optimistic state, because
+  // there is none to show.
+  els.scenes.addEventListener('click', (event) => {
+    if (!(event.target instanceof Element)) return;
+    const button = event.target.closest('button[data-action="press"]');
+    if (!button) return;
+    send(button.dataset.id, { code: button.dataset.code, value: true });
+  });
+
+  // The scenes tab keeps only its press handler: settings and editing belong to
+  // devices, and a scene has no settings.
+  els.scenes.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    const card = event.target instanceof Element ? event.target.closest('.card--scene') : null;
+    if (!card) return;
+    event.preventDefault();
+    const button = card.querySelector('button[data-action="press"]');
+    if (button) send(button.dataset.id, { code: button.dataset.code, value: true });
+  });
+
   els.customize.addEventListener('click', () => {
     if (state.editMode) stopEditing();
     else startEditing();
@@ -1162,6 +1473,8 @@
   // A bookmark can open the editor directly: on a wall tablet the address bar
   // is hard to reach, so "?edit=1" saves a trip through the settings button.
   load().then(() => {
-    if (new URLSearchParams(location.search).get('edit') === '1') startEditing();
+    const params = new URLSearchParams(location.search);
+    if (params.get('tab') === 'scenes') selectTab('scenes');
+    if (params.get('edit') === '1') startEditing();
   });
 })();

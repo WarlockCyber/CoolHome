@@ -13,6 +13,10 @@ type snapshotResponse struct {
 	Error    string      `json:"error,omitempty"`
 	Demo     bool        `json:"demo"`
 	IR       bool        `json:"ir,omitempty"`
+	// Build identifies the bundle the server is running. A page that was
+	// rendered from a different one reloads itself: the dashboard on a wall
+	// stays open for weeks, and a restart must not leave it on old code.
+	Build string `json:"build,omitempty"`
 }
 
 type deviceDTO struct {
@@ -52,12 +56,13 @@ type pointDTO struct {
 	Options []string `json:"options,omitempty"`
 }
 
-func newSnapshotDTO(snap home.Snapshot, demo, ir bool) snapshotResponse {
+func newSnapshotDTO(snap home.Snapshot, demo, ir bool, build string) snapshotResponse {
 	out := snapshotResponse{
 		Devices: make([]deviceDTO, 0, len(snap.Devices)),
 		Error:   snap.Error,
 		Demo:    demo,
 		IR:      ir,
+		Build:   build,
 	}
 	if !snap.LastSync.IsZero() {
 		t := snap.LastSync

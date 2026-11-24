@@ -285,3 +285,26 @@ test('a switch point honours the raw value shapes the cloud sends', () => {
     assert.equal(controls[0].checked, false, 'raw ' + JSON.stringify(raw) + ' should read as off');
   }
 });
+
+test('summarize shows temperature and humidity of a thing-model sensor', () => {
+  // The T & H sensor: the legacy API does not describe it, so its readings come
+  // from the thing model under humidity_value.
+  const sensor = view.summarize({
+    id: 'dev-th',
+    name: 'T & H Sensor',
+    online: true,
+    status: [
+      { code: 'temp_current', value: 110 },
+      { code: 'humidity_value', value: 52 },
+    ],
+    functions: [],
+    readings: [
+      { code: 'temp_current', name: 'Температура', type: 'Integer', scale: 1, unit: '℃' },
+      { code: 'humidity_value', name: 'Влажность', type: 'Integer', scale: 0, unit: '%' },
+    ],
+  });
+  // The mini-app keeps the cloud's own unit and drops a trailing zero, unlike
+  // the web card, which normalises ℃ to °C: what matters here is that the
+  // humidity is part of the preview at all.
+  assert.equal(sensor, '11 ℃ · 52 %');
+});

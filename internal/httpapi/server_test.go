@@ -8,8 +8,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/WarlockCyber/CoolHome/internal/demo"
@@ -200,6 +202,72 @@ func TestIndexAndStaticAssets(t *testing.T) {
 	}
 	if !bytes.Contains(body, []byte("data-action")) {
 		t.Error("app.js looks wrong")
+	}
+	if got := resp.Header.Get("Content-Type"); !strings.HasPrefix(got, "text/javascript") {
+		t.Errorf("app.js Content-Type = %q, want text/javascript", got)
+	}
+}
+
+// A new binary serves new bytes under the same URL: the stylesheet and scripts
+// are compiled into the executable. Without a validator and a cache directive a
+// browser keeps its copy, and a dashboard on a wall shows the previous interface
+// after every restart — which is indistinguishable from a fix that did not work.
+func TestStaticAssetsCarryValidators(t *testing.T) {
+	srv := newTestServer(t, Options{})
+
+	resp, body := getJSON(t, srv.URL+"/static/app.js")
+	etag := resp.Header.Get("ETag")
+	if etag == "" {
+		t.Fatal("app.js has no ETag")
+	}
+	if got := resp.Header.Get("Cache-Control"); got != "no-cache" {
+		t.Errorf("Cache-Control = %q, want no-cache", got)
+	}
+	if resp.Header.Get("Last-Modified") != "" {
+		t.Error("Last-Modified must not be sent: the embedded file has no date to honour")
+	}
+
+	// The validator must actually save the transfer: the same ETag earns a 304.
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/static/app.js", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("If-None-Match", etag)
+	again, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer again.Body.Close()
+	if again.StatusCode != http.StatusNotModified {
+		t.Errorf("conditional status = %d, want 304", again.StatusCode)
+	}
+
+	// Two different files must not share a validator, or one would be served in
+	// place of the other.
+	other, _ := getJSON(t, srv.URL+"/static/styles.css")
+	if other.Header.Get("ETag") == etag {
+		t.Error("app.js and styles.css share an ETag")
+	}
+	if len(body) == 0 {
+		t.Error("app.js body is empty")
+	}
+}
+
+func TestIndexIsNotCached(t *testing.T) {
+	srv := newTestServer(t, Options{})
+	resp, _ := getJSON(t, srv.URL+"/")
+	if got := resp.Header.Get("Cache-Control"); got != "no-store" {
+		t.Errorf("index Cache-Control = %q, want no-store: the shell names the scripts to load", got)
+	}
+}
+
+func TestStaticAssetUnknownNameIs404(t *testing.T) {
+	srv := newTestServer(t, Options{})
+	for _, path := range []string{"/static/missing.js", "/static/", "/static/../go.mod"} {
+		resp, _ := getJSON(t, srv.URL+path)
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("%s status = %d, want 404", path, resp.StatusCode)
+		}
 	}
 }
 
@@ -424,5 +492,65 @@ func TestAPressIsAcceptedAndANonPressIsRejected(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "button") {
 		t.Errorf("body = %s, want an explanation that the point is a button", body)
+	}
+}
+
+// A dashboard on a wall is opened once and left running for weeks. The poll
+// keeps its data current but cannot change the code it loaded, so after a
+// restart the page would go on showing the previous interface — the fix would
+// look like it had not been applied. The page therefore carries the bundle it
+// was rendered from, and the snapshot reports the server's own.
+func TestSnapshotReportsBuildForSelfReload(t *testing.T) {
+	srv := newTestServer(t, Options{})
+
+	page, body := getJSON(t, srv.URL+"/")
+	if page.StatusCode != http.StatusOK {
+		t.Fatalf("index status = %d", page.StatusCode)
+	}
+	m := regexp.MustCompile(`<meta name="coolhome-build" content="([^"]+)">`).FindSubmatch(body)
+	if m == nil {
+		t.Fatal("index carries no build marker, so an open page cannot notice a restart")
+	}
+	fromPage := string(m[1])
+
+	_, snapBody := getJSON(t, srv.URL+"/api/devices")
+	var snap struct {
+		Build string `json:"build"`
+	}
+	if err := json.Unmarshal(snapBody, &snap); err != nil {
+		t.Fatalf("decode snapshot: %v", err)
+	}
+	if snap.Build == "" {
+		t.Fatal("snapshot carries no build, so the page has nothing to compare")
+	}
+	if snap.Build != fromPage {
+		t.Errorf("build mismatch on the same binary: page %q, snapshot %q", fromPage, snap.Build)
+	}
+}
+
+func TestBuildFingerprintTracksContent(t *testing.T) {
+	files := fstest.MapFS{
+		"static/app.js":    {Data: []byte("one")},
+		"templates/x.html": {Data: []byte("shell")},
+	}
+	first, err := buildFingerprint(files)
+	if err != nil {
+		t.Fatalf("buildFingerprint: %v", err)
+	}
+	again, _ := buildFingerprint(files)
+	if first != again {
+		t.Error("fingerprint is not stable for the same content")
+	}
+	files["static/app.js"] = &fstest.MapFile{Data: []byte("two")}
+	changed, _ := buildFingerprint(files)
+	if changed == first {
+		t.Error("fingerprint does not change with the content it describes")
+	}
+	// The template is part of the bundle: a changed shell changes the answer too.
+	files["static/app.js"] = &fstest.MapFile{Data: []byte("one")}
+	files["templates/x.html"] = &fstest.MapFile{Data: []byte("other shell")}
+	other, _ := buildFingerprint(files)
+	if other == first {
+		t.Error("fingerprint ignores the templates")
 	}
 }

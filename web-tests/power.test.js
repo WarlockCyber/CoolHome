@@ -197,3 +197,118 @@ test('a strip with no master counts any lit gang', () => {
   };
   assert.equal(power.powerCode(strip), 'switch_2');
 });
+
+// Which devices collapse to a power card. A plug's card answers one question;
+// a thermostat or a dimmer has something a wall tunes, so it keeps its card.
+const PLUG = {
+  status: [
+    { code: 'switch_1', value: true },
+    { code: 'relay_status', value: 'last' },
+    { code: 'child_lock', value: false },
+  ],
+  functions: [
+    { code: 'switch_1', type: 'Boolean' },
+    { code: 'countdown_1', type: 'Integer' },
+    { code: 'relay_status', type: 'Enum' },
+    { code: 'light_mode', type: 'Enum' },
+    { code: 'child_lock', type: 'Boolean' },
+    { code: 'overcharge_switch', type: 'Boolean' },
+  ],
+};
+
+test('a plug collapses to its power state', () => {
+  assert.deepEqual(power.powerCard(PLUG), ['switch_1']);
+});
+
+test('a plug that is off still has a card control to show', () => {
+  const off = {
+    status: [{ code: 'switch_1', value: false }],
+    functions: [{ code: 'switch_1', type: 'Boolean' }, { code: 'countdown_1', type: 'Integer' }],
+  };
+  assert.deepEqual(power.powerCard(off), ['switch_1'], 'the card needs the control even when it is off');
+  assert.equal(power.powerCode(off), null, 'but the device is not on');
+});
+
+test('a socket thermostat with a master collapses to the master', () => {
+  assert.deepEqual(power.powerCard(SOCKET_THERMOSTAT), ['switch_all']);
+});
+
+test('a dimmer keeps its own card', () => {
+  const dimmer = {
+    status: [{ code: 'switch_led', value: true }],
+    functions: [
+      { code: 'switch_led', type: 'Boolean' },
+      { code: 'bright_value', type: 'Integer', min: 10, max: 1000 },
+    ],
+  };
+  assert.equal(power.powerCard(dimmer), null, 'brightness belongs on the card');
+});
+
+test('a thermostat keeps its own card', () => {
+  const heater = {
+    status: [{ code: 'switch', value: true }],
+    functions: [
+      { code: 'switch', type: 'Boolean' },
+      { code: 'temp_set', type: 'Integer', min: 5, max: 30 },
+      { code: 'lock', type: 'Boolean' },
+    ],
+  };
+  assert.equal(power.powerCard(heater), null, 'the set-point belongs on the card');
+});
+
+// A two-gang switch is a wall switch: both keys belong on the card as compact
+// rows, each with its own state. Refusing to collapse it left the card as a
+// list of timers and relay modes.
+test('a multi-gang switch lists every key on the card', () => {
+  const strip = {
+    status: [
+      { code: 'switch_1', value: true },
+      { code: 'switch_2', value: false },
+    ],
+    functions: [
+      { code: 'switch_1', type: 'Boolean' },
+      { code: 'switch_2', type: 'Boolean' },
+    ],
+  };
+  assert.deepEqual(power.powerCard(strip), ['switch_1', 'switch_2']);
+  assert.equal(power.powerCode(strip), 'switch_1', 'the panel still reports it as on');
+});
+
+// The real device: street lighting with two relays and a tail of settings.
+test('a two-gang switch with settings still collapses', () => {
+  const outdoor = {
+    status: [
+      { code: 'switch_1', value: false },
+      { code: 'switch_2', value: false },
+      { code: 'relay_status', value: 'last' },
+    ],
+    functions: [
+      { code: 'switch_1', type: 'Boolean' },
+      { code: 'switch_2', type: 'Boolean' },
+      { code: 'countdown_1', type: 'Integer' },
+      { code: 'countdown_2', type: 'Integer' },
+      { code: 'relay_status', type: 'Enum' },
+      { code: 'random_time', type: 'String' },
+      { code: 'switch_type', type: 'Enum' },
+    ],
+  };
+  assert.deepEqual(power.powerCard(outdoor), ['switch_1', 'switch_2']);
+});
+
+// Keys keep the order the cloud lists them: that is the order on the wall.
+test('relay order follows the cloud listing', () => {
+  const reversed = {
+    status: [],
+    functions: [
+      { code: 'switch_2', type: 'Boolean' },
+      { code: 'switch_1', type: 'Boolean' },
+    ],
+  };
+  assert.deepEqual(power.powerCard(reversed), ['switch_2', 'switch_1']);
+});
+
+test('a scene or a sensor has no power card', () => {
+  assert.equal(power.powerCard({ status: [], functions: [{ code: 'trigger', type: 'Button' }] }), null);
+  assert.equal(power.powerCard({ status: [], functions: [] }), null);
+  assert.equal(power.powerCard(null), null);
+});

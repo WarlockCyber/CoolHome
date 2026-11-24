@@ -50,6 +50,10 @@ var SUMMARY_CODES = [
   'temp_indoor',
   'va_humidity',
   'humidity',
+  // The thing-model spelling: a sensor the legacy API does not describe reports
+  // its humidity under this code, and without it the preview showed only the
+  // temperature.
+  'humidity_value',
   'battery_percentage',
   'bright_value',
   'percent_control',

@@ -42,6 +42,15 @@ const (
 // broken and retrying will not change the answer.
 const codeNotSupportDevice = 2009
 
+// codeNoPath is what the cloud answers for an endpoint that does not exist for
+// a device: asking a product for a thing model it has none of.
+const codeNoPath = 1108
+
+// codeNoThingModel marks a device whose product model document came back empty.
+// It is CoolHome's own code, not the cloud's: it is negative and permanent, so
+// callers cache it like 2009 rather than retrying.
+const codeNoThingModel = 2009
+
 // codeServiceNotSubscribed is what the cloud answers on an API surface the
 // project has not subscribed. It is a deployment step, not a failing request.
 const codeServiceNotSubscribed = 28841101
@@ -71,6 +80,16 @@ func IsUnsupportedDevice(err error) bool {
 		return false
 	}
 	return api.Code == codeNotSupportDevice
+}
+
+// isDeviceWithoutModel reports the cloud's answer that a device has no legacy
+// model to read: no specification, and no path to one.
+func isDeviceWithoutModel(err error) bool {
+	var api *APIError
+	if !errors.As(err, &api) {
+		return false
+	}
+	return api.Code == codeNotSupportDevice || api.Code == codeNoPath
 }
 
 // IsServiceNotSubscribed reports an API surface the Cloud project has not

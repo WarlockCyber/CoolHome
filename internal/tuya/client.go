@@ -57,6 +57,9 @@ type Client struct {
 
 	uidMu     sync.Mutex
 	linkedUID string // uid of a Smart Life account linked to the project
+
+	modelMu   sync.RWMutex
+	modelOnly map[string]bool // device id -> described by the thing model
 }
 
 type tokenState struct {
@@ -92,6 +95,7 @@ func New(cfg Config) (*Client, error) {
 	if c.now == nil {
 		c.now = time.Now
 	}
+	c.modelOnly = map[string]bool{}
 	return c, nil
 }
 
@@ -236,22 +240,97 @@ func (c *Client) cachedLinkedUID() string {
 func (c *Client) Device(ctx context.Context, id string) (Device, error) {
 	var d Device
 	err := c.call(ctx, http.MethodGet, "/v1.0/devices/"+url.PathEscape(id), nil, nil, &d)
-	return d, err
+	if err != nil {
+		return d, err
+	}
+	if len(d.Status) == 0 {
+		// The legacy record leaves status empty for devices it has no legacy
+		// model for, although the cloud does keep their latest values. Asking
+		// the shadow is what makes such a sensor readable at all.
+		if props, perr := c.ShadowProperties(ctx, id); perr == nil {
+			d.Status = props
+		}
+	}
+	return d, nil
 }
 
 // Spec returns the writable functions and reported status points of a device.
 func (c *Client) Spec(ctx context.Context, id string) (Spec, error) {
 	var s Spec
 	err := c.call(ctx, http.MethodGet, "/v1.0/devices/"+url.PathEscape(id)+"/specifications", nil, nil, &s)
-	return s, err
+	if err == nil {
+		c.setModelOnly(id, false)
+		return s, nil
+	}
+	if !IsUnsupportedDevice(err) {
+		return s, err
+	}
+	// The legacy endpoint knows no model for this product, but the thing model
+	// of the same cloud usually does. When it describes something the UI can
+	// present, use it; otherwise keep the original reason, which is the honest
+	// one — the device really has no data points anyone could drive.
+	alt, altErr := c.ThingModel(ctx, id)
+	if altErr == nil && (len(alt.Functions) > 0 || len(alt.Status) > 0) {
+		c.setModelOnly(id, true)
+		return alt, nil
+	}
+	c.setModelOnly(id, false)
+	// Keep 2009 only when the cloud said the device has no model at all. Any
+	// other failure — an IoT Core service the project has not subscribed, a
+	// permission problem, a timeout — must surface as itself: reported as
+	// "this device has no data points", a setup mistake would hide behind a
+	// device property until the 24-hour cache expired.
+	if altErr != nil && !isDeviceWithoutModel(altErr) {
+		return Spec{}, altErr
+	}
+	return Spec{}, err
+}
+
+// setModelOnly records whether a device is described by the thing model rather
+// than the legacy specification. Command reads it to pick the write surface:
+// the two are not interchangeable.
+func (c *Client) setModelOnly(id string, on bool) {
+	c.modelMu.Lock()
+	defer c.modelMu.Unlock()
+	if on {
+		c.modelOnly[id] = true
+		return
+	}
+	delete(c.modelOnly, id)
+}
+
+func (c *Client) usesThingModel(id string) bool {
+	c.modelMu.RLock()
+	defer c.modelMu.RUnlock()
+	return c.modelOnly[id]
 }
 
 // Command sends data points to a device.
+//
+// Most devices take the legacy command endpoint. The products the thing model
+// describes do not: the same endpoint answers 2008 for them, while IoT Core
+// accepts the write. Which surface a device uses is a fact observed by Spec,
+// not a guess from an error code — retrying every 2008 through a path that
+// does not validate would let a wrong value through.
 func (c *Client) Command(ctx context.Context, id string, cmds []Command) error {
 	body := struct {
 		Commands []Command `json:"commands"`
 	}{Commands: cmds}
-	return c.call(ctx, http.MethodPost, "/v1.0/devices/"+url.PathEscape(id)+"/commands", nil, body, nil)
+	err := c.call(ctx, http.MethodPost, "/v1.0/devices/"+url.PathEscape(id)+"/commands", nil, body, nil)
+	if err == nil {
+		return nil
+	}
+	if !c.usesThingModel(id) && !isDeviceWithoutModel(err) {
+		return err
+	}
+	properties := make(map[string]any, len(cmds))
+	for _, cmd := range cmds {
+		properties[cmd.Code] = cmd.Value
+	}
+	if ierr := c.IssueProperties(ctx, id, properties); ierr != nil {
+		return fmt.Errorf("tuya: %s is not on the legacy command API (%w); IoT Core write failed: %w", id, err, ierr)
+	}
+	return nil
 }
 
 // call performs a signed request, refreshing the token once when the cloud

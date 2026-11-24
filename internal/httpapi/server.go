@@ -44,6 +44,9 @@ type server struct {
 	tmpl       *template.Template
 	corsPolicy *corsPolicy
 	dash       *dashboard.Store
+	// build identifies the embedded bundle; a page that sees it change reloads
+	// itself, so a wall tablet never runs yesterday's interface.
+	build string
 }
 
 // New builds the HTTP handler.
@@ -59,6 +62,14 @@ func New(svc *home.Service, opts Options) (http.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("httpapi: static assets: %w", err)
 	}
+	assets, err := newStaticAssets(staticFS)
+	if err != nil {
+		return nil, fmt.Errorf("httpapi: static assets: %w", err)
+	}
+	build, err := buildFingerprint(web.FS)
+	if err != nil {
+		return nil, fmt.Errorf("httpapi: build fingerprint: %w", err)
+	}
 
 	s := &server{
 		svc:        svc,
@@ -66,6 +77,7 @@ func New(svc *home.Service, opts Options) (http.Handler, error) {
 		log:        opts.Logger,
 		tmpl:       tmpl,
 		corsPolicy: newCORSPolicy(opts.AllowedOrigins),
+		build:      build,
 	}
 	s.dash = opts.Dashboard
 	if s.dash == nil {
@@ -76,7 +88,12 @@ func New(svc *home.Service, opts Options) (http.Handler, error) {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.handleIndex)
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+	// Registered one path at a time: the set comes from the embedded tree, so an
+	// unknown name is a 404 rather than a directory listing, and every asset
+	// carries the ETag its bytes earned.
+	for _, name := range assets.names() {
+		mux.Handle("GET /static/"+name, assets.handler(name))
+	}
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("GET /api/devices", s.handleDevices)
 	mux.HandleFunc("GET /api/devices/{id}", s.handleDevice)
@@ -90,11 +107,15 @@ func New(svc *home.Service, opts Options) (http.Handler, error) {
 	return s.recoverer(s.logRequests(s.secureHeaders(s.cors(s.auth(mux))))), nil
 }
 
-func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
+func (s *server) handleIndex(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// The shell names the scripts to load, so a stale copy keeps an old asset
+	// list even after the binary changed. It is a few kilobytes; do not store it.
+	w.Header().Set("Cache-Control", "no-store")
 	data := struct {
-		Demo bool
-	}{Demo: s.opts.Demo}
+		Demo  bool
+		Build string
+	}{Demo: s.opts.Demo, Build: s.build}
 	if err := s.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
 		s.log.Error("render index", "err", err)
 	}
@@ -115,7 +136,7 @@ func (s *server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *server) handleDevices(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, newSnapshotDTO(s.svc.Snapshot(), s.opts.Demo, s.opts.IR))
+	writeJSON(w, http.StatusOK, newSnapshotDTO(s.svc.Snapshot(), s.opts.Demo, s.opts.IR, s.build))
 }
 
 func (s *server) handleDevice(w http.ResponseWriter, r *http.Request) {
@@ -165,7 +186,7 @@ func (s *server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "не удалось обновить состояние: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, newSnapshotDTO(s.svc.Snapshot(), s.opts.Demo, s.opts.IR))
+	writeJSON(w, http.StatusOK, newSnapshotDTO(s.svc.Snapshot(), s.opts.Demo, s.opts.IR, s.build))
 }
 
 func isValidation(err error) bool {

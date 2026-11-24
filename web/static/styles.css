@@ -75,7 +75,7 @@ h1 { font-size: 1.2rem; font-weight: 650; letter-spacing: -0.01em; }
 
 .subtitle { color: var(--muted); font-size: 0.8rem; margin-top: 0.15rem; }
 
-.statusbar { display: flex; align-items: center; gap: 0.75rem; }
+.statusbar { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 0.75rem; }
 
 .badge {
   padding: 0.25rem 0.6rem;
@@ -115,6 +115,11 @@ main {
   margin: 0 auto;
   padding: clamp(1.25rem, 3vw, 2.25rem) clamp(1rem, 4vw, 2.5rem);
 }
+
+/* `.grid { display: grid }` beats the browser's own `[hidden] { display: none }`
+   on specificity, so hiding a panel with the attribute did nothing: the scenes
+   tab switched, the button lit up, and the device grid stayed on screen. */
+[hidden] { display: none !important; }
 
 .grid {
   display: grid;
@@ -477,6 +482,40 @@ footer {
   font-variant-numeric: tabular-nums;
 }
 
+/* A sensor that measures two things shows both: on a wall the temperature
+   alone leaves "and how damp is it?" behind a button. The pair sits on one
+   line and wraps to a second when the card is too narrow for both. */
+.sensor-readings {
+  display: flex;
+  align-items: center;
+  gap: 1.1rem;
+  flex-wrap: wrap;
+}
+
+.sensor-readings .sensor-value { margin-top: 0; }
+
+/* No rule between the two: the pair wraps onto a second line on a narrow
+   widget, and a divider then hangs at the left edge of the numbers looking like
+   a stray border. The label and the size step already tell them apart. */
+.sensor-side {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.sensor-side-label {
+  font-size: 0.68rem;
+  font-weight: 620;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* One step down from the temperature: both are readings, but the temperature
+   is what the card is for. */
+.sensor-side .sensor-number { font-size: clamp(1.4rem, 2.4vw, 1.9rem); }
+.sensor-side .sensor-unit { font-size: clamp(0.8rem, 1.2vw, 0.95rem); }
+
 .sensor-number {
   font-size: clamp(2.6rem, 5vw, 3.6rem);
   font-weight: 640;
@@ -525,6 +564,12 @@ footer {
 .card--sensor { gap: 0.9rem; }
 .card--sensor .sensor-value { margin-top: 0; }
 .card--sensor .widget-more { margin-top: 0.2rem; }
+
+/* Wrapped onto two lines, the figures need less air between them than a
+   single row does. */
+@media (max-width: 560px) {
+  .sensor-readings { gap: 0.55rem; }
+}
 
 /* ---------- settings modal ---------- */
 
@@ -766,4 +811,124 @@ footer {
 @media (max-width: 560px) {
   .chip { min-width: 7.5rem; padding: 0.5rem 0.7rem; }
   .chip-name { max-width: 8rem; }
+}
+
+/* ---------- power card (plug, plain switch) ---------- */
+
+/* A plug on the wall answers one question. The state is set as text one step
+   below a sensor figure, with a switch sized for a thumb under it. */
+.card--power { gap: 0.85rem; }
+
+.power-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.15rem;
+}
+
+.power-label {
+  font-size: clamp(1.5rem, 2.6vw, 1.95rem);
+  font-weight: 620;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  color: var(--muted);
+}
+
+.power-state--on .power-label { color: var(--accent); }
+
+/* The same toggle as elsewhere, drawn larger: this is the only control on the
+   card, so it may use the room. */
+.switch--xl {
+  width: 4.6rem;
+  height: 2.6rem;
+}
+
+.switch--xl .knob {
+  left: 0.28rem;
+  width: 1.95rem;
+  height: 1.95rem;
+}
+
+.switch--xl[aria-checked="true"] .knob {
+  left: calc(100% - 2.23rem);
+  background: var(--accent);
+}
+
+.switch--xl:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.card--power .widget-more { margin-top: 0.2rem; }
+
+@media (max-width: 560px) {
+  .power-label { font-size: 1.35rem; }
+  .switch--xl { width: 4rem; height: 2.3rem; }
+  .switch--xl .knob { width: 1.7rem; height: 1.7rem; }
+  .switch--xl[aria-checked="true"] .knob { left: calc(100% - 1.98rem); }
+}
+
+/* Several keys on one card: rows of state + switch, tightened so a two-gang
+   fits without turning the card into a list. */
+.power-rows { display: flex; flex-direction: column; gap: 0.7rem; }
+
+.power-rows .power-state { margin-top: 0; }
+
+.card--power .power-rows .power-label { font-size: 1.05rem; font-weight: 560; }
+
+/* ---------- tabs ---------- */
+
+/* The switch sits in the top bar and wraps with it: on a phone the header is two
+   rows, and a switch pinned to one line would push the actions off the edge. */
+.tabs {
+  display: flex;
+  gap: 0.15rem;
+  padding: 0.2rem;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.tab {
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.45rem 0.95rem;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tab:hover { color: var(--text); }
+
+.tab[aria-selected="true"] {
+  color: var(--text);
+  background: var(--surface-raised);
+  border-color: var(--border-strong);
+}
+
+/* The scenes tab: buttons, not controls. A scene is one action, so its card is
+   mostly a large press target. */
+.grid--scenes {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 13rem), 1fr));
+}
+
+.card--scene { gap: 0.75rem; min-height: 8rem; }
+
+.card--scene .press {
+  min-height: 3.6rem;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+@media (max-width: 560px) {
+  /* The header carries the switch, the status and two actions now: tighten the
+     gaps so a phone keeps them on one line instead of leaving one button
+     stranded on a row of its own. */
+  .topbar { gap: 0.6rem; padding: 0.8rem 1rem; }
+  .statusbar { gap: 0.5rem; }
+  .tab { padding: 0.4rem 0.7rem; font-size: 0.8rem; }
+  .ghost { padding: 0.45rem 0.7rem; }
+  .grid--scenes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

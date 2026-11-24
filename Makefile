@@ -36,6 +36,7 @@ miniapp-test:
 # the only gate it gets.
 web-check:
 	node --check web/static/app.js
+	node --check web/static/figures.js
 	node --check web/static/power.js
 
 # Rules the dashboard applies to device data, tested without a browser.

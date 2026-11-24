@@ -4,6 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
+  <!-- Which bundle this page was rendered from. The page compares it with what
+       the server reports and reloads when a restart brought new code. -->
+  <meta name="coolhome-build" content="{{.Build}}">
   <title>CoolHome — умный дом</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230e1116'/%3E%3Cpath d='M8 15.5 16 9l8 6.5V23a1 1 0 0 1-1 1h-5v-6h-4v6H9a1 1 0 0 1-1-1z' fill='%236ee7b7'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/styles.css">
@@ -20,6 +23,17 @@
     <div class="statusbar">
       {{if .Demo}}<span class="badge" title="Демо-устройства, Tuya не используется">демо</span>{{end}}
       <span id="sync" class="sync" role="status">Загрузка…</span>
+      <!-- Две вкладки: устройства и сценарии. Сценарии — действия по кнопке, у
+           них нет состояния, и в общем списке они только мешают искать свет.
+           Переключатель стоит в шапке, рядом с «Обновить»: полоса под панелью
+           «Сейчас включено» уезжала вверх при прокрутке, и на планшете до неё
+           приходилось возвращаться. -->
+      <nav class="tabs" role="tablist" aria-label="Разделы">
+        <button type="button" class="tab" role="tab" id="tab-devices"
+          data-tab="devices" aria-selected="true" aria-controls="devices">Устройства</button>
+        <button type="button" class="tab" role="tab" id="tab-scenes"
+          data-tab="scenes" aria-selected="false" aria-controls="scenes">Сценарии</button>
+      </nav>
       <button id="customize" class="ghost" type="button" aria-pressed="false">Пульт</button>
       <button id="refresh" class="ghost" type="button">Обновить</button>
     </div>
@@ -36,7 +50,8 @@
 
   <main>
     <div id="banner" class="banner" role="alert" hidden></div>
-    <section id="devices" class="grid" aria-label="Устройства"></section>
+    <section id="devices" class="grid" role="tabpanel" aria-labelledby="tab-devices" aria-label="Устройства"></section>
+    <section id="scenes" class="grid grid--scenes" role="tabpanel" aria-labelledby="tab-scenes" aria-label="Сценарии" hidden></section>
     <p id="empty" class="empty" hidden>Устройства не найдены. Проверьте, что аккаунт приложения привязан к проекту Tuya.</p>
   </main>
 
@@ -54,6 +69,7 @@
     <p>Tuya Cloud OpenAPI · состояние обновляется автоматически</p>
   </footer>
 
+  <script src="/static/figures.js" defer></script>
   <script src="/static/power.js" defer></script>
   <script src="/static/app.js" defer></script>
 </body>
