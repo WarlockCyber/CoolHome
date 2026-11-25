@@ -92,6 +92,22 @@ func isDeviceWithoutModel(err error) bool {
 	return api.Code == codeNotSupportDevice || api.Code == codeNoPath
 }
 
+// codeQuotaExhausted is the cloud's answer when the project's controllable
+// device pool is used up: the request is well formed, and no device will accept
+// a write until the plan in the Tuya console changes.
+const codeQuotaExhausted = 60001001
+
+// IsQuotaExhausted reports a write refused because the Cloud project's
+// controllable-device quota is used up. It is a subscription condition, not a
+// fault of the device or of the request.
+func IsQuotaExhausted(err error) bool {
+	var api *APIError
+	if !errors.As(err, &api) {
+		return false
+	}
+	return api.Code == codeQuotaExhausted
+}
+
 // IsServiceNotSubscribed reports an API surface the Cloud project has not
 // subscribed. The request is well-formed; the project is missing a step in the
 // Tuya console, so retrying on the next poll cannot help.

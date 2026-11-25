@@ -35,6 +35,15 @@ type deviceDTO struct {
 	SpecUnsupported bool `json:"spec_unsupported,omitempty"`
 	// Note explains a device that is visible but not controllable.
 	Note string `json:"note,omitempty"`
+	// CloudName is what the cloud calls the device, present only when a local
+	// name overrides it. The page needs it to offer "use the cloud's name
+	// again" and to know what the old name was when it renames widgets.
+	CloudName string `json:"cloud_name,omitempty"`
+	// Renamed says a local name overrides the cloud's. It is a flag rather than
+	// an inference from CloudName because a device whose cloud name is empty
+	// would otherwise look unrenamed, and saving its dialog without edits would
+	// quietly delete the local name.
+	Renamed bool `json:"renamed,omitempty"`
 }
 
 type statusDTO struct {
@@ -56,7 +65,7 @@ type pointDTO struct {
 	Options []string `json:"options,omitempty"`
 }
 
-func newSnapshotDTO(snap home.Snapshot, demo, ir bool, build string) snapshotResponse {
+func newSnapshotDTO(snap home.Snapshot, demo, ir bool, build string, names map[string]string) snapshotResponse {
 	out := snapshotResponse{
 		Devices: make([]deviceDTO, 0, len(snap.Devices)),
 		Error:   snap.Error,
@@ -69,15 +78,25 @@ func newSnapshotDTO(snap home.Snapshot, demo, ir bool, build string) snapshotRes
 		out.LastSync = &t
 	}
 	for _, v := range snap.Devices {
-		out.Devices = append(out.Devices, newDeviceDTO(v))
+		out.Devices = append(out.Devices, newDeviceDTO(v, names))
 	}
 	return out
 }
 
-func newDeviceDTO(v home.DeviceView) deviceDTO {
+// newDeviceDTO maps one device. `names` carries the installation's local names:
+// a name set here overrides what the cloud calls the device, and the cloud is
+// never told about it.
+func newDeviceDTO(v home.DeviceView, names map[string]string) deviceDTO {
+	name := v.Name
+	local := names[v.ID]
+	if local != "" {
+		name = local
+	}
 	dto := deviceDTO{
 		ID:        v.ID,
-		Name:      v.Name,
+		Name:      name,
+		CloudName: cloudNameIfRenamed(v.Name, local),
+		Renamed:   local != "",
 		Category:  v.Category,
 		Product:   v.ProductName,
 		Online:    v.Online,
@@ -102,6 +121,15 @@ func newDeviceDTO(v home.DeviceView) deviceDTO {
 		dto.Readings = append(dto.Readings, newPointDTO(f))
 	}
 	return dto
+}
+
+// cloudNameIfRenamed reports the cloud's name only when a local one shadows it.
+// Sending both names for every device would double the snapshot for nothing.
+func cloudNameIfRenamed(cloud, local string) string {
+	if local == "" || local == cloud {
+		return ""
+	}
+	return cloud
 }
 
 func newPointDTO(f tuya.Function) pointDTO {

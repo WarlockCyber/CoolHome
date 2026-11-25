@@ -108,12 +108,177 @@ h1 { font-size: 1.2rem; font-weight: 650; letter-spacing: -0.01em; }
 
 /* ---------- layout ---------- */
 
+/* Two parts: the side panel and the main area. The split only happens when
+   there is a panel to show and the screen is wide enough for both; below that
+   the panel follows the main area instead of squeezing it.
+
+   The panel comes first in the markup, so it is first in the grid: what a
+   screen reader and the Tab key walk through is what the eye sees. On a narrow
+   screen the order is flipped instead — the devices are what a phone is opened
+   for, and a column of cards above them would only push them down. */
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  flex: 1;
+  min-width: 0;
+  /* Panel and grid are one composition, so they are centred as one. Without
+     this the panel would hug the window edge while the grid sat centred, and a
+     seam of empty background would run between two things that belong together.
+     The width is the grid's own maximum plus the panel's. */
+  width: 100%;
+  max-width: calc(1280px + 20rem);
+  margin: 0 auto;
+}
+
+/* Stacked: the panel goes under the devices, whatever the markup order says. */
+.workspace > main { order: 1; }
+.workspace > .side-panel { order: 2; }
+
+@media (min-width: 1024px) {
+  .workspace--split { grid-template-columns: 20rem minmax(0, 1fr); }
+  /* Side by side, the markup order already matches the columns: the panel is
+     first in both, so the override is not needed and the Tab order stays
+     left-to-right. */
+  .workspace--split > main,
+  .workspace--split > .side-panel { order: initial; }
+
+  /* The rule between the columns belongs to the main area, not to the panel:
+     the panel is only as tall as its cards (it sticks and scrolls), so a border
+     on it would stop halfway down the page and read as a broken line. */
+  .workspace--split > main { border-left: 1px solid var(--border); }
+}
+
 main {
   flex: 1;
   width: 100%;
   max-width: 1280px;
   margin: 0 auto;
   padding: clamp(1.25rem, 3vw, 2.25rem) clamp(1rem, 4vw, 2.5rem);
+  min-width: 0;
+}
+
+/* ---------- side panel ---------- */
+
+.side-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: 1rem clamp(1rem, 4vw, 2.5rem) 1.5rem;
+  /* Under the main area on a narrow screen: the rule separates them. */
+  border-top: 1px solid var(--border);
+  min-width: 0;
+}
+
+/* On a wide screen the panel is a column of its own: it keeps its place while
+   the main area scrolls, because a card one has to scroll to is not "what you
+   want to see at a glance". */
+@media (min-width: 1024px) {
+  .side-panel {
+    /* Below the header, which is itself sticky: top: 0 would slide the panel's
+       title under it. The offset is measured by the page (`--header-h`), not
+       guessed: the header grows a row when the demo badge or a long sync time
+       wraps it, and a fixed number would then hide the panel's title. */
+    position: sticky;
+    top: var(--header-h, 5.25rem);
+    align-self: start;
+    max-height: calc(100vh - var(--header-h, 5.25rem));
+    overflow-y: auto;
+    /* The outer edge keeps a little air; the inner one matches the grid's own
+       padding, so the gap between the panel's cards and the rule equals the gap
+       between the rule and the first column of cards. */
+    padding: 1.5rem clamp(1rem, 2.5vw, 2rem) 2rem clamp(1.25rem, 2.5vw, 2.5rem);
+    border-top: none;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 30%);
+  }
+}
+
+.side-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.76rem;
+  font-weight: 620;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.side-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.5rem;
+  height: 1.5rem;
+  padding: 0 0.45rem;
+  border-radius: 999px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-size: 0.78rem;
+  letter-spacing: 0;
+}
+
+.side-list { display: flex; flex-direction: column; gap: 0.9rem; }
+
+/* A card in the panel is the same card as in the grid, one per row. Its
+   controls stay live: the point of putting a thermostat here is to turn it up
+   without leaving the screen. */
+.side-item { display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; }
+
+/* While editing, a panel card is a thing to be moved, not a thing to press: the
+   chrome sits directly under it, and a tap aimed at ✕ must not hit a switch.
+   The card is wrapped in an `inert` element for that (which also keeps it out of
+   the tab order); `pointer-events` repeats the rule for a WebView old enough to
+   ignore the attribute, where the promise would otherwise not hold. */
+.side-panel--editing .side-item .card { opacity: 0.9; pointer-events: none; }
+
+.side-edit { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.3rem; }
+
+.side-edit button {
+  font: inherit;
+  font-size: 0.8rem;
+  line-height: 1;
+  padding: 0.45rem 0.2rem;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.side-edit button:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
+.side-edit button:disabled { opacity: 0.35; cursor: default; }
+.side-edit .danger:hover:not(:disabled) { border-color: var(--danger); color: #ffd9d5; }
+
+/* The empty slot of the panel while editing: the only place a card is added
+   from, mirroring the remote's add tile. */
+.side-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 4.5rem;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.side-add:hover { border-color: var(--accent); color: var(--text); }
+.side-add .add-plus { font-size: 1.15rem; }
+
+.side-hint { color: var(--muted); font-size: 0.8rem; line-height: 1.4; }
+
+/* A device that left the home keeps its slot rather than vanishing: the panel
+   must not silently rearrange itself under a hand. */
+.side-missing {
+  padding: 0.9rem 1rem;
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
 }
 
 /* `.grid { display: grid }` beats the browser's own `[hidden] { display: none }`
@@ -138,6 +303,37 @@ main {
   color: #ffd9d5;
   font-size: 0.9rem;
 }
+
+/* A condition, not a failure: the devices are fine, the Tuya plan is not. It is
+   amber rather than red so it does not read as "something is broken here", and
+   it stays until dismissed or until a command finally succeeds. */
+.banner--notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  border-color: rgba(240, 193, 106, 0.45);
+  background: rgba(240, 193, 106, 0.1);
+  color: #f6dfb0;
+  line-height: 1.45;
+}
+
+.banner-text { flex: 1; }
+
+.banner-close {
+  flex: none;
+  font: inherit;
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 0.3rem 0.45rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.75;
+}
+
+.banner-close:hover { opacity: 1; border-color: currentColor; }
 
 /* ---------- card ---------- */
 
@@ -360,6 +556,29 @@ footer {
 
 .widget--wide { grid-column: span 2; }
 
+/* Title and its gear share a row: the title may be long, the gear must stay
+   reachable. */
+.widget-head { display: flex; align-items: center; gap: 0.5rem; }
+
+.widget-title { flex: 1; min-width: 0; }
+
+.widget-gear {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.widget-gear:hover { border-color: var(--accent); color: var(--text); }
+
 .widget-title {
   font-size: clamp(1rem, 1.5vw, 1.2rem);
   font-weight: 640;
@@ -530,6 +749,38 @@ footer {
   font-weight: 500;
 }
 
+/* The rename entry inside the settings modal: a full-width quiet button above
+   the controls, because renaming is not one of the device's own functions. */
+.rename-open {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+  margin-bottom: 0.9rem;
+  padding: 0.6rem 0.85rem;
+  border-radius: 12px;
+  border: 1px dashed var(--border-strong);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.rename-open:hover { border-color: var(--accent); color: var(--text); }
+
+/* The current local name, pushed to the far edge: the button's own label is the
+   action, this is the state, and running them together reads as one word. */
+.rename-current {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+  max-width: 55%;
+}
+
 /* A button, not a disclosure: the settings open in a modal. */
 .widget-more {
   margin-top: auto;
@@ -569,6 +820,134 @@ footer {
    single row does. */
 @media (max-width: 560px) {
   .sensor-readings { gap: 0.55rem; }
+}
+
+/* ---------- problem dialog ---------- */
+
+/* A statement of fact with a way out, not an error flash: the same visual family
+   as the settings dialog, in amber, because nothing here is broken. */
+.sheet--problem {
+  width: min(32rem, 92vw);
+  border-color: rgba(240, 193, 106, 0.45);
+}
+
+.problem-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 1.25rem 1.25rem 0.5rem;
+}
+
+.problem-head .sheet-title { flex: 1; margin: 0; }
+
+.problem-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: 0 1.25rem 1rem;
+}
+
+.problem-message {
+  font-size: 0.92rem;
+  line-height: 1.55;
+  color: #f6dfb0;
+}
+
+/* The link is the point of the dialog, so it is a button-shaped target rather
+   than a blue word in the middle of the text: on a wall tablet it has to be hit
+   with a finger. */
+.problem-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 2.75rem;
+  padding: 0.6rem 1rem;
+  border-radius: 12px;
+  border: 1px solid rgba(240, 193, 106, 0.5);
+  background: rgba(240, 193, 106, 0.12);
+  color: #f6dfb0;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.problem-link:hover { border-color: #f0c16a; background: rgba(240, 193, 106, 0.2); }
+.problem-link::after { content: '↗'; opacity: 0.8; }
+
+.problem-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0 1.25rem 1.25rem;
+}
+
+.problem-again {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex: 1;
+  font-size: 0.78rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.problem-again input { margin: 0; }
+
+.problem-ok { margin-left: auto; }
+
+/* ---------- rename dialog ---------- */
+
+/* A second, smaller dialog. It is separate from the settings modal because that
+   one is rebuilt on every poll; the name being typed must not be wiped out
+   mid-word. */
+.sheet--rename { width: min(26rem, 92vw); }
+
+.rename-form { display: flex; flex-direction: column; }
+
+.rename-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0 1.25rem 1rem;
+}
+
+.rename-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.rename-input {
+  font: inherit;
+  font-size: 1rem;
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  padding: 0.7rem 0.85rem;
+}
+
+.rename-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.rename-hint {
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.rename-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0 1.25rem 1.25rem;
+}
+
+.rename-spacer { flex: 1; }
+
+.rename-save {
+  border-color: rgba(110, 231, 183, 0.45);
+  color: var(--accent);
 }
 
 /* ---------- settings modal ---------- */

@@ -48,12 +48,49 @@
     <ul id="active-list" class="active-list"></ul>
   </section>
 
-  <main>
-    <div id="banner" class="banner" role="alert" hidden></div>
-    <section id="devices" class="grid" role="tabpanel" aria-labelledby="tab-devices" aria-label="Устройства"></section>
-    <section id="scenes" class="grid grid--scenes" role="tabpanel" aria-labelledby="tab-scenes" aria-label="Сценарии" hidden></section>
-    <p id="empty" class="empty" hidden>Устройства не найдены. Проверьте, что аккаунт приложения привязан к проекту Tuya.</p>
-  </main>
+  <!-- Две части: панель с карточками устройств слева и основная область.
+       Панель — это то, на что смотрят, а не то, что нажимают: термостат,
+       датчик, розетка под рукой. Поэтому она отдельная, а не расширение
+       пульта, и переживает переключение вкладок.
+
+       Панель стоит в разметке первой: на широком экране она и рисуется слева,
+       и обход с клавиатуры или скринридером идёт в том же порядке, что видно
+       глазами. На узком экране она уходит под основную часть (см. order в
+       styles.css), чтобы устройства не оказались за списочной колонкой. -->
+  <div id="workspace" class="workspace">
+    <aside id="side" class="side-panel" aria-label="Панель устройств" hidden>
+      <h2 class="side-title">Панель <span id="side-count" class="side-count"></span></h2>
+      <div id="side-list" class="side-list"></div>
+    </aside>
+    <main>
+      <div id="banner" class="banner" role="alert" hidden></div>
+      <section id="devices" class="grid" role="tabpanel" aria-labelledby="tab-devices" aria-label="Устройства"></section>
+      <section id="scenes" class="grid grid--scenes" role="tabpanel" aria-labelledby="tab-scenes" aria-label="Сценарии" hidden></section>
+      <p id="empty" class="empty" hidden>Устройства не найдены. Проверьте, что аккаунт приложения привязан к проекту Tuya.</p>
+    </main>
+  </div>
+
+  <!-- Сообщение о том, что нужно сделать не в CoolHome, а в консоли Tuya:
+       исчерпана квота управляемых устройств, не подписан сервис. Модальное
+       окно, а не баннер: это не мимолётная ошибка запроса, а условие, которое
+       не исчезнет само, и у него есть адрес, куда идти. -->
+  <dialog id="problem" class="sheet sheet--problem" aria-labelledby="problem-title">
+    <div class="problem-head">
+      <h2 id="problem-title" class="sheet-title"></h2>
+      <button type="button" class="ghost sheet-close" data-problem="close" aria-label="Закрыть">✕</button>
+    </div>
+    <div class="problem-body">
+      <p id="problem-message" class="problem-message"></p>
+      <a id="problem-link" class="problem-link" href="#" target="_blank"
+         rel="noopener noreferrer" hidden></a>
+    </div>
+    <div class="problem-actions">
+      <label class="problem-again">
+        <input type="checkbox" id="problem-mute"> Больше не показывать в этой сессии
+      </label>
+      <button type="button" class="ghost problem-ok" data-problem="close">Понятно</button>
+    </div>
+  </dialog>
 
   <!-- Настройки устройства. Модальное окно, а не выпадающая панель: панель
        внутри карточки перекрывалась следующими карточками в потоке. -->
@@ -65,11 +102,40 @@
     <div id="sheet-body" class="sheet-body"></div>
   </dialog>
 
+  <!-- Переименование устройства. Отдельное окно, а не поле внутри настроек:
+       настройки перерисовываются каждые восемь секунд вместе с данными, и
+       набранное имя исчезало бы из-под пальца. Это окно живёт само по себе и
+       перерисовки не боится. Имя локальное: облако остаётся при своём. -->
+  <dialog id="rename" class="sheet sheet--rename" aria-labelledby="rename-title">
+    <form method="dialog" class="rename-form" id="rename-form">
+      <div class="sheet-head">
+        <h2 id="rename-title" class="sheet-title">Название устройства</h2>
+        <button type="button" class="ghost sheet-close" data-rename="cancel" aria-label="Закрыть">✕</button>
+      </div>
+      <div class="rename-body">
+        <label class="rename-label" for="rename-input">Как называть это устройство здесь</label>
+        <input id="rename-input" class="rename-input" type="text" maxlength="60"
+               autocomplete="off" spellcheck="false" aria-describedby="rename-hint">
+        <p id="rename-hint" class="rename-hint"></p>
+      </div>
+      <div class="rename-actions">
+        <button type="button" class="ghost ghost--danger" data-rename="reset" id="rename-reset">
+          Вернуть имя из облака
+        </button>
+        <span class="rename-spacer"></span>
+        <button type="button" class="ghost" data-rename="cancel">Отмена</button>
+        <button type="submit" class="ghost rename-save" id="rename-save">Сохранить</button>
+      </div>
+    </form>
+  </dialog>
+
   <footer>
     <p>Tuya Cloud OpenAPI · состояние обновляется автоматически</p>
   </footer>
 
   <script src="/static/figures.js" defer></script>
+  <script src="/static/panel.js" defer></script>
+  <script src="/static/names.js" defer></script>
   <script src="/static/power.js" defer></script>
   <script src="/static/app.js" defer></script>
 </body>

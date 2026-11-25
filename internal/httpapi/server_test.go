@@ -554,3 +554,104 @@ func TestBuildFingerprintTracksContent(t *testing.T) {
 		t.Error("fingerprint ignores the templates")
 	}
 }
+
+// The page names its assets in the template; the binary serves whatever the
+// embed pattern found at build time. A script added to the template but never
+// built in is a 404, and the page then fails at its first call into that file —
+// which looks like a broken feature rather than a missing file. This walks the
+// template's own list and asks for each one.
+func TestEveryAssetNamedByThePageIsServed(t *testing.T) {
+	srv := newTestServer(t, Options{})
+	_, body := getJSON(t, srv.URL+"/")
+
+	refs := regexp.MustCompile(`(?:src|href)="(/static/[^"]+)"`).FindAllSubmatch(body, -1)
+	if len(refs) == 0 {
+		t.Fatal("the page names no assets at all")
+	}
+	for _, m := range refs {
+		path := string(m[1])
+		resp, _ := getJSON(t, srv.URL+path)
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("%s is named by the page but answered %d", path, resp.StatusCode)
+		}
+		if cc := resp.Header.Get("Content-Type"); cc == "" {
+			t.Errorf("%s has no Content-Type", path)
+		}
+	}
+}
+
+// The project's plan allows a fixed number of controllable devices. A device
+// outside that pool is refused by the cloud with 60001001, and the answer must
+// say so: the raw text names neither the cause nor the place to fix it, and a
+// user reading it concludes the device is broken.
+func TestCommandQuotaExhaustedIsExplained(t *testing.T) {
+	err := &tuya.APIError{Code: 60001001, Msg: "Your controllable device pool quota is insufficient."}
+	if !tuya.IsQuotaExhausted(err) {
+		t.Fatal("60001001 must be recognised as an exhausted quota")
+	}
+	if tuya.IsQuotaExhausted(&tuya.APIError{Code: 2008, Msg: "command or value not support"}) {
+		t.Error("a rejected value is not a quota problem")
+	}
+	// The message names the cause and the place to fix it, in the user's terms.
+	for _, needle := range []string{"квота", "60001001", "Tuya", "CoolHome"} {
+		if !strings.Contains(quotaMessage, needle) {
+			t.Errorf("the quota message does not mention %q: %s", needle, quotaMessage)
+		}
+	}
+}
+
+// A message about a project-level problem is an answer the page shows as a
+// modal, so it carries more than a line of text: a title, an explanation and a
+// place to go. The error field stays, so a client that only knows the old shape
+// still reads the reason.
+func TestQuotaProblemCarriesTitleAndLink(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeProblem(rec, http.StatusBadGateway, problem{
+		Code:      "quota_exhausted",
+		Title:     "Облако Tuya не принимает команду",
+		Message:   quotaMessage,
+		Link:      "https://iot.tuya.com/cloud",
+		LinkLabel: "Открыть консоль Tuya",
+	})
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", rec.Code)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v (%s)", err, rec.Body.String())
+	}
+	// The page needs all five; a client that only knows `error` still reads the
+	// reason.
+	for key, want := range map[string]string{
+		"error":      quotaMessage,
+		"code":       "quota_exhausted",
+		"title":      "Облако Tuya не принимает команду",
+		"message":    quotaMessage,
+		"link":       "https://iot.tuya.com/cloud",
+		"link_label": "Открыть консоль Tuya",
+	} {
+		if body[key] != want {
+			t.Errorf("%s = %q, want %q", key, body[key], want)
+		}
+	}
+	// The link is what the page renders into an href: it must be a web address,
+	// not something a misconfiguration could turn into script.
+	if !strings.HasPrefix(body["link"], "https://") {
+		t.Errorf("link = %q, want https", body["link"])
+	}
+}
+
+func TestConsoleURLDefaultsToTheTuyaConsole(t *testing.T) {
+	s := &server{opts: Options{}}
+	if got := s.consoleURL(); got != defaultConsoleURL {
+		t.Errorf("consoleURL() = %q, want %q", got, defaultConsoleURL)
+	}
+	s = &server{opts: Options{ConsoleURL: "https://example.test/console"}}
+	if got := s.consoleURL(); got != "https://example.test/console" {
+		t.Errorf("consoleURL() = %q, want the configured one", got)
+	}
+	if !strings.HasPrefix(defaultConsoleURL, "https://") {
+		t.Errorf("the default console URL must be https, got %q", defaultConsoleURL)
+	}
+}

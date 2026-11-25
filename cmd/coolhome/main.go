@@ -107,6 +107,7 @@ func run() error {
 		AllowedOrigins: cfg.AllowedOrigins,
 		IR:             cfg.IR && !cfg.Demo,
 		Dashboard:      dashboard.New(cfg.DashboardFile),
+		ConsoleURL:     cfg.ConsoleURL,
 	})
 	if err != nil {
 		return err

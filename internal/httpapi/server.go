@@ -35,6 +35,9 @@ type Options struct {
 	// Dashboard stores which controls the remote shows. Nil means the feature
 	// is disabled and the UI falls back to showing everything.
 	Dashboard *dashboard.Store
+	// ConsoleURL is where a message points when the cloud refuses for a reason
+	// only the Tuya console can fix. Empty falls back to defaultConsoleURL.
+	ConsoleURL string
 }
 
 type server struct {
@@ -136,7 +139,19 @@ func (s *server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *server) handleDevices(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, newSnapshotDTO(s.svc.Snapshot(), s.opts.Demo, s.opts.IR, s.build))
+	writeJSON(w, http.StatusOK, newSnapshotDTO(s.svc.Snapshot(), s.opts.Demo, s.opts.IR, s.build, s.localNames()))
+}
+
+// localNames reads the installation's device names. A store that cannot be read
+// is not a reason to fail the snapshot: the devices are still there, and the
+// cloud's names are a correct fallback.
+func (s *server) localNames() map[string]string {
+	names, err := s.dash.Names()
+	if err != nil {
+		s.log.Warn("read local device names", "err", err)
+		return nil
+	}
+	return names
 }
 
 func (s *server) handleDevice(w http.ResponseWriter, r *http.Request) {
@@ -148,7 +163,7 @@ func (s *server) handleDevice(w http.ResponseWriter, r *http.Request) {
 	// The flag travels with the device too: the single-device view is what a
 	// client with a deep link opens first, and it needs to know whether infrared
 	// remotes are being served before explaining a blaster.
-	writeJSON(w, http.StatusOK, map[string]any{"device": newDeviceDTO(view), "ir": s.opts.IR})
+	writeJSON(w, http.StatusOK, map[string]any{"device": newDeviceDTO(view, s.localNames()), "ir": s.opts.IR})
 }
 
 type commandRequest struct {
@@ -170,11 +185,23 @@ func (s *server) handleCommands(w http.ResponseWriter, r *http.Request) {
 	view, err := s.svc.Command(r.Context(), id, req.Commands)
 	switch {
 	case err == nil:
-		writeJSON(w, http.StatusOK, map[string]any{"device": newDeviceDTO(view)})
+		writeJSON(w, http.StatusOK, map[string]any{"device": newDeviceDTO(view, s.localNames())})
 	case errors.Is(err, home.ErrNotFound):
 		writeError(w, http.StatusNotFound, "устройство не найдено")
 	case isValidation(err):
 		writeError(w, http.StatusBadRequest, err.Error())
+	case tuya.IsQuotaExhausted(err):
+		// A subscription condition, not a fault: the project's plan allows a
+		// fixed number of controllable devices, and this one is outside it.
+		// It is a message with a place to go next, not a one-line error.
+		s.log.Warn("command refused: controllable device quota exhausted", "device", id, "err", err)
+		writeProblem(w, http.StatusBadGateway, problem{
+			Code:      "quota_exhausted",
+			Title:     "Облако Tuya не принимает команду",
+			Message:   quotaMessage,
+			Link:      s.consoleURL(),
+			LinkLabel: "Открыть консоль Tuya",
+		})
 	default:
 		s.log.Warn("command failed", "device", id, "err", err)
 		writeError(w, http.StatusBadGateway, "облако Tuya отклонило команду: "+err.Error())
@@ -186,7 +213,7 @@ func (s *server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "не удалось обновить состояние: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, newSnapshotDTO(s.svc.Snapshot(), s.opts.Demo, s.opts.IR, s.build))
+	writeJSON(w, http.StatusOK, newSnapshotDTO(s.svc.Snapshot(), s.opts.Demo, s.opts.IR, s.build, s.localNames()))
 }
 
 func isValidation(err error) bool {
@@ -208,6 +235,45 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
+
+// problem is an error the page shows as a message rather than a toast: it has a
+// cause the user can act on and often a place to go next.
+//
+// It is one JSON object with the error message under `error` as well, so a
+// client that only knows the old shape — a script, the mini-app — still reads
+// the reason instead of "no error field".
+type problem struct {
+	Error string `json:"error"`
+	Code  string `json:"code,omitempty"`
+	// Title is the message's heading; Message is the explanation.
+	Title     string `json:"title,omitempty"`
+	Message   string `json:"message,omitempty"`
+	Link      string `json:"link,omitempty"`
+	LinkLabel string `json:"link_label,omitempty"`
+}
+
+func writeProblem(w http.ResponseWriter, status int, p problem) {
+	p.Error = p.Message
+	writeJSON(w, status, p)
+}
+
+// consoleURL is where a message sends the user to fix a project-level problem.
+func (s *server) consoleURL() string {
+	if s.opts.ConsoleURL != "" {
+		return s.opts.ConsoleURL
+	}
+	return defaultConsoleURL
+}
+
+// defaultConsoleURL is the Tuya Cloud console (verified reachable). There is no
+// stable public URL for the plan page itself, so the link points at the console
+// where the project's plan and quota are shown; the message names the path.
+const defaultConsoleURL = "https://iot.tuya.com/cloud"
+
+// quotaMessage explains the cloud's refusal in the terms the user can act on.
+// The raw text ("Your controllable device pool quota is insufficient") names
+// neither the cause nor the place to fix it.
+const quotaMessage = `У проекта Tuya исчерпана квота управляемых устройств: облако отвечает 60001001 и отклоняет команды для устройств за её пределами. Это не сбой устройства и не ошибка CoolHome — часть устройств осталась вне тарифа проекта. Откройте консоль Tuya, выберите Cloud → Development → ваш проект и проверьте квоту: на бесплатном и пробном тарифах число управляемых устройств ограничено. После увеличения квоты команды начнут проходить без изменений в CoolHome.`
 
 func (s *server) auth(next http.Handler) http.Handler {
 	if s.opts.AuthToken == "" {
