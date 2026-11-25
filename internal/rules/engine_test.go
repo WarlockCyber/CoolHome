@@ -588,3 +588,33 @@ func TestMissedWindowDoesNotFireLate(t *testing.T) {
 		t.Fatal("the rule fired at 09:00 for a window that closed at 07:31")
 	}
 }
+
+// Europe/Berlin moves the clock forward at 02:00 on the last Sunday of March:
+// 02:30 does not exist that day. A schedule must answer sanely rather than
+// panic or invert, and an overnight window must still work on the autumn day
+// when 02:30 happens twice.
+func TestScheduleSurvivesTheClockChange(t *testing.T) {
+	loc, err := time.LoadLocation("Europe/Berlin")
+	if err != nil {
+		t.Skip("no zone database on this machine")
+	}
+	// Spring forward: a window that would contain the missing hour.
+	s := &Schedule{From: "01:00", To: "04:00"}
+	for _, clock := range [][2]int{{1, 30}, {3, 30}, {4, 30}} {
+		when := time.Date(2026, 3, 29, clock[0], clock[1], 0, 0, loc)
+		if _, err := s.Within(when); err != nil {
+			t.Fatalf("%02d:%02d on the spring jump: %v", clock[0], clock[1], err)
+		}
+	}
+	// Autumn: 02:30 occurs twice; both occurrences must be inside an overnight
+	// window, and neither may error.
+	night := &Schedule{From: "22:00", To: "06:00"}
+	when := time.Date(2026, 10, 25, 2, 30, 0, 0, loc)
+	inside, err := night.Within(when)
+	if err != nil {
+		t.Fatalf("overnight window on the autumn jump: %v", err)
+	}
+	if !inside {
+		t.Error("02:30 on the autumn jump is not inside 22:00–06:00")
+	}
+}
