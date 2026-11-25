@@ -201,6 +201,12 @@
     // session. Session only, not stored: a wall tablet that never shows the
     // message again would hide a condition that may still be there tomorrow.
     mutedProblems: new Set(),
+    // rules is the automation screen: the set, the runner's state, the journal.
+    // null until the first load, which is how the page knows to say "загрузка".
+    rules: null,
+    // ruleDraft is the rule being edited, or null. Held here, not in the DOM, so
+    // the eight-second refresh cannot close it under a finger.
+    ruleDraft: null,
     ir: false,
     // layout is the remote: the controls the user chose, in their order.
     // An empty layout means "not configured yet" and shows every device, so an
@@ -266,6 +272,20 @@
     problemMessage: document.getElementById('problem-message'),
     problemLink: document.getElementById('problem-link'),
     problemMute: document.getElementById('problem-mute'),
+    rulesPanel: document.getElementById('rules'),
+    rulesStatus: document.getElementById('rules-status'),
+    rulesGroups: document.getElementById('rules-groups'),
+    rulesList: document.getElementById('rules-list'),
+    rulesEmpty: document.getElementById('rules-empty'),
+    rulesJournal: document.getElementById('rules-journal'),
+    rulesJournalTitle: document.getElementById('rules-journal-title'),
+    rulesAdd: document.getElementById('rules-add'),
+    rulesCheck: document.getElementById('rules-check'),
+    ruleEditor: document.getElementById('rule-editor'),
+    ruleBody: document.getElementById('rule-body'),
+    ruleErrors: document.getElementById('rule-errors'),
+    ruleForm: document.getElementById('rule-form'),
+    ruleTitle: document.getElementById('rule-editor-title'),
   };
 
   // ---------- transport ----------
@@ -300,10 +320,15 @@
 
   async function load({ silent = false } = {}) {
     try {
-      const [data, board] = await Promise.all([
+      const [data, board, ruleSet] = await Promise.all([
         request('/api/devices'),
         request('/api/dashboard').catch(() => null),
+        request('/api/rules').catch(() => null),
       ]);
+      // A server without the rules feature answers with running:false, which is
+      // a real answer; a failed request leaves the previous set in place rather
+      // than blanking the screen every time the network hiccups.
+      if (ruleSet) state.rules = ruleSet;
       state.devices = Array.isArray(data.devices) ? data.devices : [];
     state.ir = Boolean(data.ir);
       if (board && Array.isArray(board.widgets)) {
@@ -525,14 +550,15 @@
     const devices = state.devices.filter((d) => !isScene(d));
     els.scenes.innerHTML = scenes.map(card).join('');
 
-    const tabs = { devices: 'devices', scenes: 'scenes' };
+    const tabs = { devices: 'devices', scenes: 'scenes', rules: 'rules' };
     for (const name of Object.keys(tabs)) {
       const on = state.tab === name;
-      const panel = name === 'devices' ? els.grid : els.scenes;
+      const panel = name === 'devices' ? els.grid : name === 'scenes' ? els.scenes : els.rulesPanel;
       panel.hidden = !on;
       const btn = document.getElementById('tab-' + name);
       if (btn) btn.setAttribute('aria-selected', on ? 'true' : 'false');
     }
+    if (state.tab === 'rules') renderRules();
     // The "nothing here" hint belongs to the devices tab, which is the one that
     // shows the whole house.
     const onDevices = state.tab === 'devices';
@@ -806,6 +832,10 @@
   // The server applies the names themselves; these rules are what the dialog
   // uses before anything is sent.
   const localNames = window.CoolHomeNames;
+
+  // The rule form's helpers: value parsing, the sentence a rule reads as, and
+  // what stops a draft from being saved.
+  const ruleHelp = window.CoolHomeRules;
 
   // temperatureUnit normalises Tuya's spellings to one symbol.
   function temperatureUnit(point) {
@@ -1678,6 +1708,545 @@
     state.notice = state.problem.message;
   }
 
+  // ---------- rules ----------
+
+  // ruleLabel names a device and, when a code is given, the point inside it. The
+  // conditional part matters: a rule reads "Температура меньше 18", not
+  // "bfb7dccc9fe2fa2b9flqge.temp_current < 18".
+  function ruleLabel(deviceID, code) {
+    const device = state.devices.find((d) => d.id === deviceID);
+    const name = device ? device.name || device.id : deviceID;
+    if (!code) return name;
+    const point = device
+      ? (device.functions || []).find((f) => f.code === code) ||
+        (device.readings || []).find((r) => r.code === code)
+      : null;
+    const fn = point ? label(point) : code;
+    return fn && fn !== name ? name + ' · ' + fn : name;
+  }
+
+  // selectablePoints lists what a condition or an action may name: every
+  // reported reading and every writable function, with its current value so the
+  // editor can prefill something sensible.
+  function selectablePoints(deviceID) {
+    const device = state.devices.find((d) => d.id === deviceID);
+    if (!device) return [];
+    const values = Object.fromEntries((device.status || []).map((s) => [s.code, s.value]));
+    const seen = new Set();
+    const out = [];
+    for (const list of [device.functions || [], device.readings || []]) {
+      for (const p of list) {
+        if (seen.has(p.code) || String(p.code).endsWith('_f')) continue;
+        seen.add(p.code);
+        out.push({ code: p.code, label: label(p), value: values[p.code] });
+      }
+    }
+    return out;
+  }
+
+  function renderRules() {
+    const data = state.rules;
+    if (!data) {
+      els.rulesStatus.textContent = 'Загрузка правил…';
+      return;
+    }
+    // The status line answers the one question the list cannot: is anything
+    // actually watching the house right now?
+    const notes = [];
+    if (!data.running) {
+      notes.push('Правила выключены: задайте COOLHOME_RULES_FILE (или COOLHOME_RULES=true).');
+    } else if (!data.primed) {
+      notes.push('Правила ещё не проверялись — первая проверка задаёт точку отсчёта.');
+    } else if (data.last_run) {
+      notes.push('Проверено в ' + new Date(data.last_run).toLocaleTimeString('ru-RU'));
+    }
+    if (data.editable === false) {
+      notes.push('Список хранится только в памяти: задайте COOLHOME_RULES_FILE.');
+    }
+    if (data.timezone) notes.push('Часовой пояс: ' + data.timezone + '.');
+    if (data.last_error) notes.push('Ошибка: ' + data.last_error);
+    els.rulesStatus.textContent = notes.join(' ');
+
+    els.rulesGroups.innerHTML = (data.groups || [])
+      .map((g) => {
+        const on = Boolean(g.enabled);
+        return (
+          '<div class="rules-group">' +
+            '<span class="rules-group-name">' + esc(g.name) + '</span>' +
+            '<button type="button" class="switch" role="switch" aria-checked="' + on + '"' +
+              ' aria-label="' + esc(g.name + ': ' + (on ? 'группа включена' : 'группа выключена')) + '"' +
+              ' data-rule-group="' + esc(g.name) + '"><span class="knob"></span></button>' +
+          '</div>'
+        );
+      })
+      .join('');
+
+    const rules = data.rules || [];
+    els.rulesEmpty.hidden = rules.length > 0;
+    els.rulesList.innerHTML = rules.map(ruleRow).join('');
+
+    const journal = data.journal || [];
+    els.rulesJournalTitle.hidden = journal.length === 0;
+    els.rulesJournal.innerHTML = journal
+      .slice()
+      .reverse()
+      .map((e) => {
+        const when = new Date(e.time).toLocaleTimeString('ru-RU');
+        // The journal keeps device ids; the page is what knows their names, and
+        // which of them the person renamed locally.
+        const what = (e.actions || [])
+          .map((a) => {
+            const name =
+              a.kind === 'scene'
+                ? 'сцена ' + ruleLabel(a.scene, '')
+                : ruleLabel(a.device, a.code) + ' → ' + ruleHelp.formatValue(a.value);
+            return a.note ? name + ' (' + a.note + ')' : name;
+          })
+          .join(', ');
+        return (
+          '<li class="journal-row' + (e.error ? ' journal-row--error' : '') + '">' +
+            '<span class="journal-time">' + esc(when) + '</span>' +
+            '<span class="journal-name">' + esc(e.name || e.rule) + '</span>' +
+            '<span class="journal-what">' + esc(what) + '</span>' +
+          '</li>'
+        );
+      })
+      .join('');
+  }
+
+  function ruleRow(rule) {
+    const summary = ruleHelp.summarize(rule, ruleLabel);
+    const on = Boolean(rule.enabled);
+    const groupBadge = rule.group
+      ? '<span class="rule-group">' + esc(rule.group) + '</span>'
+      : '';
+    return (
+      '<li class="rule' + (on ? '' : ' rule--off') + '" data-rule-row="' + esc(rule.id) + '">' +
+        '<div class="rule-main">' +
+          '<div class="rule-name">' + esc(rule.name) + groupBadge + '</div>' +
+          '<div class="rule-trigger">' + esc(summary.trigger || '—') + '</div>' +
+          '<div class="rule-does">' + esc(summary.actions || '—') + '</div>' +
+          (summary.notes ? '<div class="rule-notes">' + esc(summary.notes) + '</div>' : '') +
+        '</div>' +
+        '<div class="rule-side">' +
+          '<button type="button" class="switch" role="switch" aria-checked="' + on + '"' +
+            ' aria-label="' + esc(rule.name + ': ' + (on ? 'включено' : 'выключено')) + '"' +
+            ' data-rule-toggle="' + esc(rule.id) + '"><span class="knob"></span></button>' +
+          '<button type="button" class="ghost rule-edit" data-rule-edit="' + esc(rule.id) + '"' +
+            ' aria-label="' + esc(rule.name + ': изменить') + '">✎</button>' +
+          '<button type="button" class="ghost ghost--danger" data-rule-delete="' + esc(rule.id) + '"' +
+            ' aria-label="' + esc(rule.name + ': удалить') + '">✕</button>' +
+        '</div>' +
+      '</li>'
+    );
+  }
+
+  // ---------- rule editor ----------
+
+  function emptyDraft() {
+    return {
+      id: '',
+      name: '',
+      group: '',
+      enabled: true,
+      when: [{ device: '', code: '', op: '<', value: '' }],
+      at: { from: '', to: '', days: [] },
+      for: '',
+      cooldown: '',
+      mode: 'edge',
+      actions: [{ kind: 'command', device: '', code: '', value: '', scene: '' }],
+    };
+  }
+
+  function openRuleEditor(rule) {
+    state.ruleDraft = rule
+      ? {
+          id: rule.id,
+          name: rule.name || '',
+          group: rule.group || '',
+          enabled: rule.enabled !== false,
+          when: (rule.when || []).map((c) => ({ ...c })),
+          at: { from: '', to: '', days: [], ...(rule.at || {}) },
+          for: rule.for || '',
+          cooldown: rule.cooldown || '',
+          mode: rule.mode || 'edge',
+          actions: (rule.actions || []).map((a) => ({
+            kind: a.kind,
+            device: a.device || '',
+            code: a.code || '',
+            value: a.value === undefined || a.value === null ? '' : String(a.value),
+            scene: a.scene || '',
+          })),
+        }
+      : emptyDraft();
+    if (!state.ruleDraft.when.length && state.ruleDraft.at.from) {
+      state.ruleDraft.when = [];
+    }
+    if (!state.ruleDraft.actions.length) state.ruleDraft.actions = [{ kind: 'command', device: '', code: '', value: '', scene: '' }];
+    els.ruleTitle.textContent = rule ? 'Изменить правило' : 'Новое правило';
+    els.ruleErrors.hidden = true;
+    renderRuleEditor();
+    if (!els.ruleEditor.open && typeof els.ruleEditor.showModal === 'function') {
+      els.ruleEditor.showModal();
+    }
+  }
+
+  function closeRuleEditor() {
+    state.ruleDraft = null;
+    if (els.ruleEditor.open) els.ruleEditor.close();
+  }
+
+  function deviceOptions(selected, placeholder) {
+    const opts = ['<option value="">' + esc(placeholder) + '</option>'];
+    for (const d of state.devices.filter((x) => !isScene(x))) {
+      opts.push(
+        '<option value="' + esc(d.id) + '"' + (d.id === selected ? ' selected' : '') + '>' +
+          esc(d.name || d.id) +
+        '</option>',
+      );
+    }
+    return opts.join('');
+  }
+
+  function pointOptions(deviceID, selected) {
+    const points = selectablePoints(deviceID);
+    const opts = ['<option value="">— показание —</option>'];
+    for (const p of points) {
+      opts.push(
+        '<option value="' + esc(p.code) + '"' + (p.code === selected ? ' selected' : '') + '>' +
+          esc(p.label) +
+        '</option>',
+      );
+    }
+    return opts.join('');
+  }
+
+  function sceneOptions(selected) {
+    const scenes = state.devices.filter(isScene);
+    const opts = ['<option value="">— сцена —</option>'];
+    for (const s of scenes) {
+      opts.push(
+        '<option value="' + esc(s.id) + '"' + (s.id === selected ? ' selected' : '') + '>' +
+          esc(s.name || s.id) +
+        '</option>',
+      );
+    }
+    return opts.join('');
+  }
+
+  function renderRuleEditor() {
+    const d = state.ruleDraft;
+    if (!d) return;
+    // A group is free text with the existing ones offered as suggestions: the
+    // group switch is only useful if a group can be made, and requiring a JSON
+    // edit for that would make half the feature unreachable from the page.
+    const groupNames = ((state.rules && state.rules.groups) || [])
+      .map((g) => '<option value="' + esc(g.name) + '"></option>')
+      .join('');
+
+    const conditions = d.when
+      .map((c, i) => {
+        const points = selectablePoints(c.device);
+        const isEnum = points.some((p) => p.code === c.code && p.options);
+        return (
+          '<div class="rule-row" data-when="' + i + '">' +
+            '<select data-when-device="' + i + '" aria-label="Устройство условия ' + (i + 1) + '">' +
+              deviceOptions(c.device, '— устройство —') +
+            '</select>' +
+            '<select data-when-code="' + i + '" aria-label="Показание условия ' + (i + 1) + '">' +
+              pointOptions(c.device, c.code) +
+            '</select>' +
+            '<select data-when-op="' + i + '" aria-label="Сравнение ' + (i + 1) + '">' +
+              ruleHelp.OPS.map(
+                (op) =>
+                  '<option value="' + op + '"' + (op === c.op ? ' selected' : '') + '>' +
+                    esc(ruleHelp.OP_LABELS[op]) +
+                  '</option>',
+              ).join('') +
+            '</select>' +
+            '<input data-when-value="' + i + '" type="text" value="' + esc(c.value) + '"' +
+              ' placeholder="значение" aria-label="Значение условия ' + (i + 1) + '">' +
+            '<button type="button" class="ghost ghost--danger rule-row-x" data-remove-when="' + i + '"' +
+              ' aria-label="Убрать условие ' + (i + 1) + '">✕</button>' +
+          '</div>'
+        );
+      })
+      .join('');
+
+    const actions = d.actions
+      .map((a, i) => {
+        const body =
+          a.kind === 'scene'
+            ? '<select data-action-scene="' + i + '" aria-label="Сцена действия ' + (i + 1) + '">' +
+                sceneOptions(a.scene) +
+              '</select>'
+            : '<select data-action-device="' + i + '" aria-label="Устройство действия ' + (i + 1) + '">' +
+                deviceOptions(a.device, '— устройство —') +
+              '</select>' +
+              '<select data-action-code="' + i + '" aria-label="Функция действия ' + (i + 1) + '">' +
+                pointOptions(a.device, a.code) +
+              '</select>' +
+              '<input data-action-value="' + i + '" type="text" value="' + esc(a.value) + '"' +
+                ' placeholder="значение" aria-label="Значение действия ' + (i + 1) + '">';
+        return (
+          '<div class="rule-row" data-action="' + i + '">' +
+            '<select data-action-kind="' + i + '" aria-label="Тип действия ' + (i + 1) + '">' +
+              '<option value="command"' + (a.kind === 'command' ? ' selected' : '') + '>устройство</option>' +
+              '<option value="scene"' + (a.kind === 'scene' ? ' selected' : '') + '>сцена</option>' +
+            '</select>' +
+            body +
+            '<button type="button" class="ghost ghost--danger rule-row-x" data-remove-action="' + i + '"' +
+              ' aria-label="Убрать действие ' + (i + 1) + '">✕</button>' +
+          '</div>'
+        );
+      })
+      .join('');
+
+    const days = ruleHelp.DAYS.map(
+      (day) =>
+        '<label class="rule-day">' +
+          '<input type="checkbox" data-day="' + day.code + '"' +
+            (d.at.days.indexOf(day.code) >= 0 ? ' checked' : '') + '>' +
+          esc(day.label) +
+        '</label>',
+    ).join('');
+
+    els.ruleBody.innerHTML =
+      '<label class="rule-field">Название' +
+        '<input id="rule-name" type="text" maxlength="60" value="' + esc(d.name) + '"' +
+          ' placeholder="Например: холодно в спальне">' +
+      '</label>' +
+      '<div class="rule-field rule-field--inline">' +
+        '<label>Группа' +
+          '<input id="rule-group" type="text" list="rule-group-list" maxlength="60"' +
+            ' value="' + esc(d.group) + '" placeholder="без группы">' +
+          '<datalist id="rule-group-list">' + groupNames + '</datalist>' +
+        '</label>' +
+        '<label>Режим' +
+          '<select id="rule-mode">' +
+            '<option value="edge"' + (d.mode !== 'level' ? ' selected' : '') + '>один раз при переходе</option>' +
+            '<option value="level"' + (d.mode === 'level' ? ' selected' : '') + '>повторять, пока верно</option>' +
+          '</select>' +
+        '</label>' +
+      '</div>' +
+      '<fieldset class="rule-set">' +
+        '<legend>Условия</legend>' +
+        '<div id="rule-when">' + conditions + '</div>' +
+        '<button type="button" class="ghost rule-add-row" data-add-when="1">＋ условие</button>' +
+      '</fieldset>' +
+      '<fieldset class="rule-set">' +
+        '<legend>Расписание</legend>' +
+        '<div class="rule-row">' +
+          '<label class="rule-time">с <input type="time" id="rule-from" value="' + esc(d.at.from) + '"></label>' +
+          '<label class="rule-time">по <input type="time" id="rule-to" value="' + esc(d.at.to) + '"></label>' +
+        '</div>' +
+        '<div class="rule-days">' + days + '</div>' +
+        '<p class="rule-hint">Пусто — без расписания. Заполнено только «с» — сработает в эту минуту.</p>' +
+      '</fieldset>' +
+      '<div class="rule-field rule-field--inline">' +
+        '<label>Держать (for)<input id="rule-for" type="text" value="' + esc(d.for) + '" placeholder="5m"></label>' +
+        '<label>Не чаще (cooldown)<input id="rule-cooldown" type="text" value="' + esc(d.cooldown) + '" placeholder="10m"></label>' +
+      '</div>' +
+      '<fieldset class="rule-set">' +
+        '<legend>Действия</legend>' +
+        '<div id="rule-actions">' + actions + '</div>' +
+        '<button type="button" class="ghost rule-add-row" data-add-action="1">＋ действие</button>' +
+      '</fieldset>';
+  }
+
+  // readRuleForm copies the DOM into the draft. It runs before any structural
+  // re-render, so a value typed into one row is not lost when another row is
+  // added or a device is changed.
+  function readRuleForm() {
+    const d = state.ruleDraft;
+    if (!d) return;
+    const val = (id) => {
+      const el = document.getElementById(id);
+      return el ? el.value : '';
+    };
+    d.name = val('rule-name');
+    d.group = val('rule-group');
+    d.mode = val('rule-mode') === 'level' ? 'level' : 'edge';
+    d.for = val('rule-for');
+    d.cooldown = val('rule-cooldown');
+    d.at = {
+      from: val('rule-from'),
+      to: val('rule-to'),
+      days: d.at.days.slice(),
+    };
+    for (const box of els.ruleBody.querySelectorAll('[data-day]')) {
+      const day = box.dataset.day;
+      const on = box.checked;
+      const at = d.at.days.indexOf(day);
+      if (on && at < 0) d.at.days.push(day);
+      if (!on && at >= 0) d.at.days.splice(at, 1);
+    }
+    const pick = (root, attr) => {
+      const el = els.ruleBody.querySelector('[' + attr + '="' + root + '"]');
+      return el ? el.value : '';
+    };
+    d.when = d.when.map((c, i) => ({
+      device: pick(i, 'data-when-device') || c.device,
+      code: pick(i, 'data-when-code') || c.code,
+      op: pick(i, 'data-when-op') || c.op,
+      value: document.querySelector('[data-when-value="' + i + '"]')
+        ? document.querySelector('[data-when-value="' + i + '"]').value
+        : c.value,
+    }));
+    d.actions = d.actions.map((a, i) => {
+      const kind = pick(i, 'data-action-kind') || a.kind;
+      if (kind === 'scene') {
+        return { kind: 'scene', scene: pick(i, 'data-action-scene'), device: '', code: '', value: '' };
+      }
+      const valueEl = document.querySelector('[data-action-value="' + i + '"]');
+      return {
+        kind: 'command',
+        device: pick(i, 'data-action-device') || a.device,
+        code: pick(i, 'data-action-code') || a.code,
+        value: valueEl ? valueEl.value : a.value,
+        scene: '',
+      };
+    });
+  }
+
+  // draftPayload converts the typed strings into the rule the server stores.
+  function draftPayload() {
+    const d = state.ruleDraft;
+    const payload = {
+      id: d.id || undefined,
+      name: d.name,
+      group: d.group,
+      enabled: d.enabled,
+      mode: d.mode,
+      for: d.for,
+      cooldown: d.cooldown,
+      at: d.at.from ? d.at : null,
+      when: d.when
+        .filter((c) => c.device && c.code)
+        .map((c) => ({ device: c.device, code: c.code, op: c.op, value: ruleHelp.parseValue(c.value) })),
+      actions: d.actions
+        .filter((a) => (a.kind === 'scene' ? a.scene : a.device && a.code))
+        .map((a) =>
+          a.kind === 'scene'
+            ? { kind: 'scene', scene: a.scene }
+            : { kind: 'command', device: a.device, code: a.code, value: ruleHelp.parseValue(a.value) },
+        ),
+    };
+    return payload;
+  }
+
+  async function saveRule() {
+    const d = state.ruleDraft;
+    if (!d) return;
+    readRuleForm();
+    const payload = draftPayload();
+    const errors = ruleHelp.validateDraft(payload);
+    if (errors.length) {
+      els.ruleErrors.hidden = false;
+      els.ruleErrors.textContent = errors.join('; ');
+      return;
+    }
+    const current = (state.rules && state.rules.rules) || [];
+    const replacing = current.some((r) => r.id === payload.id);
+    const rule = {
+      id: payload.id || ruleHelp.makeID(payload.name),
+      name: payload.name.trim(),
+      enabled: payload.enabled,
+      actions: payload.actions,
+    };
+    if (payload.group) rule.group = payload.group;
+    if (payload.when.length) rule.when = payload.when;
+    if (payload.at) {
+      rule.at = { from: payload.at.from };
+      if (payload.at.to) rule.at.to = payload.at.to;
+      if (payload.at.days && payload.at.days.length) rule.at.days = payload.at.days.slice();
+    }
+    if (payload.for) rule.for = payload.for;
+    if (payload.cooldown) rule.cooldown = payload.cooldown;
+    if (payload.mode === 'level') rule.mode = 'level';
+
+    const rules = replacing
+      ? current.map((r) => (r.id === rule.id ? rule : r))
+      : current.concat([rule]);
+    // A group named for the first time is created enabled: a person who typed a
+    // group into a rule expects the rule to run, not to disappear into a group
+    // that starts switched off.
+    const groups = ((state.rules && state.rules.groups) || []).slice();
+    if (rule.group && !groups.some((g) => g.name === rule.group)) {
+      groups.push({ name: rule.group, enabled: true });
+    }
+    try {
+      const data = await request('/api/rules', {
+        method: 'PUT',
+        body: JSON.stringify({ groups, rules }),
+      });
+      state.rules = data;
+      state.error = '';
+      closeRuleEditor();
+      render();
+    } catch (err) {
+      els.ruleErrors.hidden = false;
+      els.ruleErrors.textContent = err.message;
+    }
+  }
+
+  async function switchRule(id, enabled) {
+    try {
+      state.rules = await request('/api/rules/' + encodeURIComponent(id) + '/enabled', {
+        method: 'POST',
+        body: JSON.stringify({ enabled }),
+      });
+      state.error = '';
+    } catch (err) {
+      state.error = err.message;
+    }
+    render();
+  }
+
+  async function switchGroup(name, enabled) {
+    try {
+      state.rules = await request('/api/rules/groups/' + encodeURIComponent(name) + '/enabled', {
+        method: 'POST',
+        body: JSON.stringify({ enabled }),
+      });
+      state.error = '';
+    } catch (err) {
+      state.error = err.message;
+    }
+    render();
+  }
+
+  async function deleteRule(id) {
+    const current = (state.rules && state.rules.rules) || [];
+    const rules = current.filter((r) => r.id !== id);
+    try {
+      state.rules = await request('/api/rules', {
+        method: 'PUT',
+        body: JSON.stringify({ groups: (state.rules && state.rules.groups) || [], rules }),
+      });
+      state.error = '';
+    } catch (err) {
+      state.error = err.message;
+    }
+    render();
+  }
+
+  // checkRules asks the server what would fire right now, without sending
+  // anything: waiting for the next tick to learn whether a rule works is a bad
+  // way to write one.
+  async function checkRules() {
+    try {
+      const data = await request('/api/rules/check', { method: 'POST', body: '{}' });
+      if (data) {
+        state.rules = { ...state.rules, ...data, journal: data.journal };
+      }
+      state.error = '';
+    } catch (err) {
+      state.error = err.message;
+    }
+    render();
+  }
+
   // ---------- renaming a device ----------
 
   // renaming remembers which device the dialog is about. Kept here, not in the
@@ -1964,7 +2533,7 @@
   // ---------- tabs ----------
 
   function selectTab(name) {
-    if (name !== 'devices' && name !== 'scenes') return;
+    if (name !== 'devices' && name !== 'scenes' && name !== 'rules') return;
     state.tab = name;
     // Editing lives on the devices tab; leaving it must not leave the grid in a
     // half-edited state.
@@ -1972,8 +2541,8 @@
     render();
     // Keep the address in step so a reload returns to the same tab.
     const url = new URL(location.href);
-    if (name === 'scenes') url.searchParams.set('tab', 'scenes');
-    else url.searchParams.delete('tab');
+    if (name === 'devices') url.searchParams.delete('tab');
+    else url.searchParams.set('tab', name);
     history.replaceState(null, '', url);
   }
 
@@ -2050,6 +2619,88 @@
     window.addEventListener('resize', publishHeaderHeight);
   }
 
+  // ---------- rules events ----------
+
+  els.rulesAdd.addEventListener('click', () => openRuleEditor(null));
+  els.rulesCheck.addEventListener('click', checkRules);
+
+  els.rulesList.addEventListener('click', (event) => {
+    if (!(event.target instanceof Element)) return;
+    const toggle = event.target.closest('[data-rule-toggle]');
+    if (toggle) {
+      switchRule(toggle.dataset.ruleToggle, toggle.getAttribute('aria-checked') !== 'true');
+      return;
+    }
+    const edit = event.target.closest('[data-rule-edit]');
+    if (edit) {
+      const rule = (state.rules && state.rules.rules || []).find((r) => r.id === edit.dataset.ruleEdit);
+      if (rule) openRuleEditor(rule);
+      return;
+    }
+    const del = event.target.closest('[data-rule-delete]');
+    if (del) deleteRule(del.dataset.ruleDelete);
+  });
+
+  els.rulesGroups.addEventListener('click', (event) => {
+    if (!(event.target instanceof Element)) return;
+    const btn = event.target.closest('[data-rule-group]');
+    if (!btn) return;
+    switchGroup(btn.dataset.ruleGroup, btn.getAttribute('aria-checked') !== 'true');
+  });
+
+  els.ruleForm.addEventListener('submit', (event) => {
+    // The form's own submission would close the dialog without storing anything.
+    event.preventDefault();
+    saveRule();
+  });
+
+  els.ruleEditor.addEventListener('click', (event) => {
+    if (!(event.target instanceof Element)) return;
+    if (event.target.closest('[data-rule="cancel"]') || event.target === els.ruleEditor) {
+      closeRuleEditor();
+    }
+  });
+
+  els.ruleEditor.addEventListener('close', () => {
+    state.ruleDraft = null;
+  });
+
+  // Typing updates the draft without a repaint: re-rendering on every keystroke
+  // would take the caret out of the field being typed into.
+  els.ruleBody.addEventListener('input', () => readRuleForm());
+
+  // Structural controls repaint, because they change what other fields offer: a
+  // different device has different points, a different action kind has different
+  // inputs.
+  els.ruleBody.addEventListener('change', (event) => {
+    if (!(event.target instanceof Element)) return;
+    readRuleForm();
+    const t = event.target;
+    const structural =
+      t.matches('[data-when-device]') ||
+      t.matches('[data-action-kind]') ||
+      t.matches('[data-action-device]') ||
+      t.matches('[data-day]');
+    if (structural) renderRuleEditor();
+  });
+
+  els.ruleBody.addEventListener('click', (event) => {
+    if (!(event.target instanceof Element)) return;
+    const addWhen = event.target.closest('[data-add-when]');
+    const addAction = event.target.closest('[data-add-action]');
+    const remWhen = event.target.closest('[data-remove-when]');
+    const remAction = event.target.closest('[data-remove-action]');
+    if (!addWhen && !addAction && !remWhen && !remAction) return;
+    readRuleForm();
+    const d = state.ruleDraft;
+    if (!d) return;
+    if (addWhen) d.when.push({ device: '', code: '', op: '<', value: '' });
+    if (addAction) d.actions.push({ kind: 'command', device: '', code: '', value: '', scene: '' });
+    if (remWhen) d.when.splice(Number(remWhen.dataset.removeWhen), 1);
+    if (remAction) d.actions.splice(Number(remAction.dataset.removeAction), 1);
+    renderRuleEditor();
+  });
+
   setInterval(() => {
     if (!document.hidden) load({ silent: true });
   }, REFRESH_MS);
@@ -2062,7 +2713,8 @@
   // is hard to reach, so "?edit=1" saves a trip through the settings button.
   load().then(() => {
     const params = new URLSearchParams(location.search);
-    if (params.get('tab') === 'scenes') selectTab('scenes');
+    const fromURL = params.get('tab');
+    if (fromURL === 'scenes' || fromURL === 'rules') selectTab(fromURL);
     if (params.get('edit') === '1') startEditing();
   });
 })();

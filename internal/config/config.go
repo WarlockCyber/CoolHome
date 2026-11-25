@@ -43,7 +43,20 @@ type Config struct {
 	// not ours: if Tuya moves it, the message moves with one environment
 	// variable instead of a release.
 	ConsoleURL string
-	Tuya       tuya.Config
+	// Rules enables the automation engine: "condition → action" rules stored in
+	// RulesFile. Off by default, because an automation that sends commands to a
+	// real house should be something a person turned on.
+	Rules bool
+	// RulesFile stores the rules. Empty keeps them in memory only.
+	RulesFile string
+	// RulesInterval is how often rules are evaluated. Empty means the poll
+	// interval: a rule cannot see a change its input has not seen.
+	RulesInterval time.Duration
+	// TZ is the zone rule schedules are read in. Empty means the machine's
+	// local zone. It is an IANA name ("Europe/Moscow"), not an offset, so
+	// daylight saving is handled by the zone database rather than by arithmetic.
+	TZ   string
+	Tuya tuya.Config
 }
 
 // Load reads configuration from the environment, applying defaults.
@@ -88,6 +101,36 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("config: COOLHOME_SCENES=%q is not a boolean", raw)
 		}
 		cfg.Scenes = enabled
+	}
+
+	if raw := strings.TrimSpace(get("COOLHOME_RULES")); raw != "" {
+		enabled, err := strconv.ParseBool(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("config: COOLHOME_RULES=%q is not a boolean", raw)
+		}
+		cfg.Rules = enabled
+	}
+	cfg.RulesFile = strings.TrimSpace(get("COOLHOME_RULES_FILE"))
+	if cfg.RulesFile != "" {
+		// A file implies the feature: asking for rules to be persisted and then
+		// not running them would be a surprising reading of the setting.
+		cfg.Rules = true
+	}
+	cfg.TZ = strings.TrimSpace(get("COOLHOME_TZ"))
+	if cfg.TZ != "" {
+		if _, err := time.LoadLocation(cfg.TZ); err != nil {
+			return Config{}, fmt.Errorf("config: COOLHOME_TZ=%q is not a known time zone (%w)", cfg.TZ, err)
+		}
+	}
+	if raw := strings.TrimSpace(get("COOLHOME_RULES_INTERVAL")); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("config: COOLHOME_RULES_INTERVAL=%q: %w", raw, err)
+		}
+		if d < time.Second {
+			return Config{}, fmt.Errorf("config: COOLHOME_RULES_INTERVAL must be at least 1s")
+		}
+		cfg.RulesInterval = d
 	}
 
 	if raw := strings.TrimSpace(get("COOLHOME_DEMO")); raw != "" {

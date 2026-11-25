@@ -21,6 +21,7 @@ import (
 	"github.com/WarlockCyber/CoolHome/internal/home"
 	"github.com/WarlockCyber/CoolHome/internal/httpapi"
 	"github.com/WarlockCyber/CoolHome/internal/ir"
+	"github.com/WarlockCyber/CoolHome/internal/rules"
 	"github.com/WarlockCyber/CoolHome/internal/scene"
 	"github.com/WarlockCyber/CoolHome/internal/tuya"
 )
@@ -100,6 +101,39 @@ func run() error {
 	}
 
 	svc := home.New(provider, cfg.DeviceIDs, cfg.PollInterval, logger)
+
+	// Rules are opt-in: an automation that sends commands to a real house should
+	// be something a person turned on.
+	var runner *rules.Runner
+	if cfg.Rules {
+		loc := time.Local
+		if cfg.TZ != "" {
+			l, err := time.LoadLocation(cfg.TZ)
+			if err != nil {
+				return err
+			}
+			loc = l
+		}
+		interval := cfg.RulesInterval
+		if interval <= 0 {
+			interval = cfg.PollInterval
+		}
+		r, err := rules.NewRunner(rules.Options{
+			Store:    rules.New(cfg.RulesFile),
+			Executor: svc,
+			Snapshot: svc.Snapshot,
+			Logger:   logger,
+			Interval: interval,
+			Location: loc,
+		})
+		if err != nil {
+			return err
+		}
+		runner = r
+		logger.Info("rules enabled",
+			"file", cfg.RulesFile, "interval", interval.String(), "tz", loc.String())
+	}
+
 	handler, err := httpapi.New(svc, httpapi.Options{
 		AuthToken:      cfg.AuthToken,
 		Demo:           cfg.Demo,
@@ -108,6 +142,8 @@ func run() error {
 		IR:             cfg.IR && !cfg.Demo,
 		Dashboard:      dashboard.New(cfg.DashboardFile),
 		ConsoleURL:     cfg.ConsoleURL,
+		Rules:          runner,
+		RulesLocation:  rulesLocation(cfg.TZ),
 	})
 	if err != nil {
 		return err
@@ -128,6 +164,9 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go svc.Run(ctx)
+	if runner != nil {
+		go runner.Run(ctx)
+	}
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
@@ -177,4 +216,17 @@ func isAddrInUse(err error) bool {
 		}
 	}
 	return errors.Is(err, syscall.EADDRINUSE)
+}
+
+// rulesLocation resolves the zone rule schedules are read in, for the API so a
+// rule preview and the runner agree about what "22:00" means.
+func rulesLocation(name string) *time.Location {
+	if name == "" {
+		return time.Local
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return time.Local
+	}
+	return loc
 }

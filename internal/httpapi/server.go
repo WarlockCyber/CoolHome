@@ -14,6 +14,7 @@ import (
 
 	"github.com/WarlockCyber/CoolHome/internal/dashboard"
 	"github.com/WarlockCyber/CoolHome/internal/home"
+	"github.com/WarlockCyber/CoolHome/internal/rules"
 	"github.com/WarlockCyber/CoolHome/internal/tuya"
 	"github.com/WarlockCyber/CoolHome/web"
 )
@@ -38,6 +39,13 @@ type Options struct {
 	// ConsoleURL is where a message points when the cloud refuses for a reason
 	// only the Tuya console can fix. Empty falls back to defaultConsoleURL.
 	ConsoleURL string
+	// Rules is the automation runner. Nil means the feature is off: the page
+	// shows the rule screen with running:false rather than a 404, so it can say
+	// how to turn it on.
+	Rules *rules.Runner
+	// RulesLocation is the zone schedules are read in, so a check and the runner
+	// agree about what "22:00" means. Nil means time.Local.
+	RulesLocation *time.Location
 }
 
 type server struct {
@@ -104,6 +112,11 @@ func New(svc *home.Service, opts Options) (http.Handler, error) {
 	mux.HandleFunc("POST /api/refresh", s.handleRefresh)
 	mux.HandleFunc("GET /api/dashboard", s.handleDashboard)
 	mux.HandleFunc("PUT /api/dashboard", s.handleSaveDashboard)
+	mux.HandleFunc("GET /api/rules", s.handleRules)
+	mux.HandleFunc("PUT /api/rules", s.handleSaveRules)
+	mux.HandleFunc("POST /api/rules/check", s.handleRulesCheck)
+	mux.HandleFunc("POST /api/rules/{id}/enabled", s.handleRuleEnabled)
+	mux.HandleFunc("POST /api/rules/groups/{name}/enabled", s.handleGroupEnabled)
 
 	// cors sits inside secureHeaders so preflight answers carry the same
 	// hardening headers, and outside auth so preflights pass without a token.
