@@ -34,6 +34,11 @@
   function parseValue(raw) {
     var text = String(raw == null ? '' : raw).trim();
     if (text === '') return null;
+    // A Russian keyboard writes 18,5 — the decimal comma is what the person
+    // means, and keeping it as text made a numeric comparison that could never
+    // match. A comma is only read as a decimal point when the rest is a number,
+    // so "а,б" stays text.
+    if (/^-?\d+,\d+$/.test(text)) return Number(text.replace(',', '.'));
     if (/^-?\d+(\.\d+)?$/.test(text)) return Number(text);
     if (text === 'true') return true;
     if (text === 'false') return false;
@@ -49,6 +54,19 @@
 
   // isZeroDuration recognises the spellings of "no wait": an empty string, a
   // bare 0, and 0s/0m/0h.
+  // clockValue normalises a time for <input type="time">, which only accepts
+  // zero-padded 24-hour "HH:MM". A hand-written "7:30" is a valid rule but an
+  // invalid field value: the input shows empty, and saving then quietly drops
+  // the schedule.
+  function clockValue(raw) {
+    var text = String(raw == null ? '' : raw).trim();
+    if (!text) return '';
+    var m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(text);
+    if (!m) return '';
+    var hh = m[1].length === 1 ? '0' + m[1] : m[1];
+    return hh + ':' + m[2];
+  }
+
   function isZeroDuration(raw) {
     var text = String(raw == null ? '' : raw).trim();
     if (text === '' || text === '0') return true;
@@ -222,6 +240,7 @@
     parseValue: parseValue,
     formatValue: formatValue,
     isZeroDuration: isZeroDuration,
+    clockValue: clockValue,
     scheduleText: scheduleText,
     conditionText: conditionText,
     actionText: actionText,

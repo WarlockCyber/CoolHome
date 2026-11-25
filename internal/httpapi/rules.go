@@ -111,6 +111,100 @@ func (s *server) handleSaveRules(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.newRulesResponse(saved))
 }
 
+// handleRuleUpsert saves one rule without touching the rest. It exists because
+// the whole-set PUT is a lost-update trap: two screens each hold a copy from up
+// to one poll ago, and whichever saves last wins — a group a phone switched off
+// comes back on, a rule a phone added disappears. Editing one rule changes one
+// rule.
+func (s *server) handleRuleUpsert(w http.ResponseWriter, r *http.Request) {
+	if !s.rulesAvailable() {
+		writeError(w, http.StatusConflict, "правила выключены: задайте COOLHOME_RULES=true или COOLHOME_RULES_FILE")
+		return
+	}
+	id := r.PathValue("id")
+	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	dec.UseNumber()
+	var rule rules.Rule
+	if err := dec.Decode(&rule); err != nil {
+		writeError(w, http.StatusBadRequest, "некорректный JSON: "+err.Error())
+		return
+	}
+	if rule.ID != "" && rule.ID != id {
+		writeError(w, http.StatusBadRequest, "id в теле не совпадает с адресом")
+		return
+	}
+	rule.ID = id
+
+	saved, err := s.opts.Rules.Store().Update(func(set *rules.Set) error {
+		// A group named by the rule is created enabled if it is new: a person who
+		// typed a group name expects the rule to run, not to hide in a group that
+		// starts switched off.
+		if rule.Group != "" {
+			found := false
+			for _, g := range set.Groups {
+				if g.Name == rule.Group {
+					found = true
+					break
+				}
+			}
+			if !found {
+				set.Groups = append(set.Groups, rules.Group{Name: rule.Group, Enabled: true})
+			}
+		}
+		for i := range set.Rules {
+			if set.Rules[i].ID == id {
+				set.Rules[i] = rule
+				return nil
+			}
+		}
+		set.Rules = append(set.Rules, rule)
+		return nil
+	})
+	s.writeSavedRules(w, saved, err)
+}
+
+// handleRuleDelete removes one rule by id.
+func (s *server) handleRuleDelete(w http.ResponseWriter, r *http.Request) {
+	if !s.rulesAvailable() {
+		writeError(w, http.StatusConflict, "правила выключены: задайте COOLHOME_RULES=true или COOLHOME_RULES_FILE")
+		return
+	}
+	id := r.PathValue("id")
+	found := false
+	saved, err := s.opts.Rules.Store().Update(func(set *rules.Set) error {
+		for i := range set.Rules {
+			if set.Rules[i].ID == id {
+				set.Rules = append(set.Rules[:i], set.Rules[i+1:]...)
+				found = true
+				return nil
+			}
+		}
+		return nil
+	})
+	if err == nil && !found {
+		writeError(w, http.StatusNotFound, "правило не найдено")
+		return
+	}
+	s.writeSavedRules(w, saved, err)
+}
+
+// writeSavedRules is the shared tail of the write handlers: an invalid set is a
+// 400, anything else a 500, and success is the whole screen back.
+func (s *server) writeSavedRules(w http.ResponseWriter, saved rules.Set, err error) {
+	if err != nil {
+		if errors.Is(err, rules.ErrInvalid) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.log.Error("save rules", "err", err)
+		writeError(w, http.StatusInternalServerError, "не удалось сохранить правила: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, s.newRulesResponse(saved))
+}
+
 // handleRuleEnabled switches one rule. It is separate from saving the whole set
 // because it is the one action a person takes in a hurry: the automation is in
 // the way, and it has to stop now, from a phone.
@@ -199,7 +293,7 @@ func (s *server) handleRulesCheck(w http.ResponseWriter, r *http.Request) {
 	}
 	preview := make([]rules.Entry, 0, len(decisions))
 	for _, d := range decisions {
-		entry := rules.Entry{Time: now, RuleID: d.RuleID, Name: d.RuleName, Group: d.Group}
+		entry := rules.Entry{Time: now, RuleID: d.RuleID, Name: d.RuleName, Group: d.Group, Preview: true}
 		for _, a := range d.Actions {
 			if a.Kind == rules.ActionScene {
 				entry.Actions = append(entry.Actions, rules.JournalAction{Kind: rules.ActionScene, Scene: a.Scene})

@@ -210,8 +210,10 @@ func TestRulesCheckSendsNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hm.set("d1", "temp_current", float64(150))
-	runner.Step(context.Background()) // prime
+	// Prime with the condition false: a rule already true at startup waits for
+	// the next real rise instead of acting.
+	hm.set("d1", "temp_current", float64(250))
+	runner.Step(context.Background())
 	hm.set("d1", "temp_current", float64(150))
 
 	srv := newTestServer(t, Options{Demo: true, Rules: runner, RulesLocation: time.UTC})

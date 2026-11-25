@@ -116,6 +116,10 @@ func New(svc *home.Service, opts Options) (http.Handler, error) {
 	mux.HandleFunc("PUT /api/rules", s.handleSaveRules)
 	mux.HandleFunc("POST /api/rules/check", s.handleRulesCheck)
 	mux.HandleFunc("POST /api/rules/{id}/enabled", s.handleRuleEnabled)
+	// Editing one rule sends one rule: the whole-set PUT is kept for scripts, but
+	// the page must not use it, or two screens overwrite each other.
+	mux.HandleFunc("PUT /api/rules/{id}", s.handleRuleUpsert)
+	mux.HandleFunc("DELETE /api/rules/{id}", s.handleRuleDelete)
 	mux.HandleFunc("POST /api/rules/groups/{name}/enabled", s.handleGroupEnabled)
 
 	// cors sits inside secureHeaders so preflight answers carry the same

@@ -239,3 +239,39 @@ func TestWritesLeaveNoTemporaryFiles(t *testing.T) {
 		t.Errorf("dir has %d entries, want just the rule file", len(entries))
 	}
 }
+
+// A rule pointing at a group that is no longer in the file must not make the
+// whole set unreadable: every rule would stop and the page could not even show
+// the list to fix it.
+func TestFileWithAStaleGroupStillLoads(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "r.json")
+	raw := `{"rules":[{"id":"r1","name":"r","group":"удалённая","enabled":true,` +
+		`"when":[{"device":"d","code":"c","op":"<","value":1}],` +
+		`"actions":[{"kind":"command","device":"p","code":"s","value":true}]}]}`
+	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	set, err := New(path).Get()
+	if err != nil {
+		t.Fatalf("a stale group made the whole set unreadable: %v", err)
+	}
+	if len(set.Rules) != 1 {
+		t.Fatalf("rules = %+v", set.Rules)
+	}
+	if set.Rules[0].Group != "" {
+		t.Errorf("group = %q, want it dropped", set.Rules[0].Group)
+	}
+	if !set.Rules[0].Enabled {
+		t.Error("dropping the group disabled the rule")
+	}
+}
+
+// Writing is still strict: a new rule must not name a group that does not exist.
+func TestSavingANewRuleWithAStaleGroupIsRefused(t *testing.T) {
+	s := New(filepath.Join(t.TempDir(), "r.json"))
+	rule := sampleRule("r1")
+	rule.Group = "нет такой"
+	if _, err := s.Save(Set{Rules: []Rule{rule}}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid", err)
+	}
+}

@@ -1786,7 +1786,11 @@
     els.rulesList.innerHTML = rules.map(ruleRow).join('');
 
     const journal = data.journal || [];
+    // A dry run answers "what would happen": it is labelled so it is not read as
+    // something the house has just done.
+    const preview = journal.some((e) => e.preview);
     els.rulesJournalTitle.hidden = journal.length === 0;
+    els.rulesJournalTitle.textContent = preview ? 'Что сработало бы сейчас' : 'Последние срабатывания';
     els.rulesJournal.innerHTML = journal
       .slice()
       .reverse()
@@ -2037,8 +2041,10 @@
       '<fieldset class="rule-set">' +
         '<legend>Расписание</legend>' +
         '<div class="rule-row">' +
-          '<label class="rule-time">с <input type="time" id="rule-from" value="' + esc(d.at.from) + '"></label>' +
-          '<label class="rule-time">по <input type="time" id="rule-to" value="' + esc(d.at.to) + '"></label>' +
+          // clockValue pads a hand-written "7:30": the input would otherwise show
+          // empty, and saving would drop the schedule without saying so.
+          '<label class="rule-time">с <input type="time" id="rule-from" value="' + esc(ruleHelp.clockValue(d.at.from)) + '"></label>' +
+          '<label class="rule-time">по <input type="time" id="rule-to" value="' + esc(ruleHelp.clockValue(d.at.to)) + '"></label>' +
         '</div>' +
         '<div class="rule-days">' + days + '</div>' +
         '<p class="rule-hint">Пусто — без расписания. Заполнено только «с» — сработает в эту минуту.</p>' +
@@ -2146,8 +2152,6 @@
       els.ruleErrors.textContent = errors.join('; ');
       return;
     }
-    const current = (state.rules && state.rules.rules) || [];
-    const replacing = current.some((r) => r.id === payload.id);
     const rule = {
       id: payload.id || ruleHelp.makeID(payload.name),
       name: payload.name.trim(),
@@ -2165,20 +2169,13 @@
     if (payload.cooldown) rule.cooldown = payload.cooldown;
     if (payload.mode === 'level') rule.mode = 'level';
 
-    const rules = replacing
-      ? current.map((r) => (r.id === rule.id ? rule : r))
-      : current.concat([rule]);
-    // A group named for the first time is created enabled: a person who typed a
-    // group into a rule expects the rule to run, not to disappear into a group
-    // that starts switched off.
-    const groups = ((state.rules && state.rules.groups) || []).slice();
-    if (rule.group && !groups.some((g) => g.name === rule.group)) {
-      groups.push({ name: rule.group, enabled: true });
-    }
+    // One rule is saved as one rule. Sending the whole set would take this page's
+    // copy — up to one poll old — and overwrite whatever another screen changed
+    // in the meantime, including a group somebody just switched off.
     try {
-      const data = await request('/api/rules', {
+      const data = await request('/api/rules/' + encodeURIComponent(rule.id), {
         method: 'PUT',
-        body: JSON.stringify({ groups, rules }),
+        body: JSON.stringify(rule),
       });
       state.rules = data;
       state.error = '';
@@ -2217,13 +2214,8 @@
   }
 
   async function deleteRule(id) {
-    const current = (state.rules && state.rules.rules) || [];
-    const rules = current.filter((r) => r.id !== id);
     try {
-      state.rules = await request('/api/rules', {
-        method: 'PUT',
-        body: JSON.stringify({ groups: (state.rules && state.rules.groups) || [], rules }),
-      });
+      state.rules = await request('/api/rules/' + encodeURIComponent(id), { method: 'DELETE' });
       state.error = '';
     } catch (err) {
       state.error = err.message;

@@ -1,6 +1,7 @@
 package rules
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -65,7 +66,10 @@ func one(id string, op string, value any, actions ...Action) Set {
 // fire runs one tick and reports whether the rule fired.
 func fire(t *testing.T, set Set, r Readings, state State, now time.Time) (bool, State) {
 	t.Helper()
-	decisions, next := Evaluate(set, r, state, now, msk)
+	decisions, next, errs := Evaluate(set, r, state, now, msk)
+	if len(errs) > 0 {
+		t.Fatalf("evaluation reported errors: %v", errs)
+	}
 	fired := false
 	for _, d := range decisions {
 		if len(d.Actions) == 0 {
@@ -153,7 +157,9 @@ func TestLevelFiresWhileTrueUntilCooldown(t *testing.T) {
 // hold timer of one that is waiting.
 func TestMissingValueIsNotFalse(t *testing.T) {
 	set := one("r", "<", 180)
-	fired, state := fire(t, set, cold, NewState(), t2("10:00"))
+	// Prime on a state where the condition is false: a rule that is already true
+	// at startup waits for the next real rise instead of acting.
+	fired, state := fire(t, set, warm, NewState(), t2("10:00"))
 	if fired {
 		t.Fatal("priming tick fired")
 	}
@@ -178,18 +184,22 @@ func TestForRequiresTheConditionToHold(t *testing.T) {
 	set := one("r", "<", 180)
 	set.Rules[0].For = "5m"
 
-	fired, state := fire(t, set, cold, NewState(), t2("10:00"))
+	// Prime with the condition false: the run has to start with a real rise.
+	fired, state := fire(t, set, warm, NewState(), t2("10:00"))
 	if fired {
 		t.Fatal("priming tick fired")
 	}
-	// t=10:00 was the priming tick; the run starts there.
-	for _, at := range []string{"10:01", "10:04"} {
+	fired, state = fire(t, set, cold, state, t2("10:01"))
+	if fired {
+		t.Fatal("fired on the tick the condition became true")
+	}
+	for _, at := range []string{"10:02", "10:05"} {
 		fired, state = fire(t, set, cold, state, t2(at))
 		if fired {
 			t.Fatalf("fired at %s, before the 5m hold elapsed", at)
 		}
 	}
-	fired, _ = fire(t, set, cold, state, t2("10:05"))
+	fired, _ = fire(t, set, cold, state, t2("10:06"))
 	if !fired {
 		t.Fatal("did not fire once the hold elapsed")
 	}
@@ -200,9 +210,13 @@ func TestForRestartsOnFlap(t *testing.T) {
 	set := one("r", "<", 180)
 	set.Rules[0].For = "5m"
 
-	fired, state := fire(t, set, cold, NewState(), t2("10:00"))
+	fired, state := fire(t, set, warm, NewState(), t2("10:00"))
 	if fired {
 		t.Fatal("priming tick fired")
+	}
+	fired, state = fire(t, set, cold, state, t2("10:01"))
+	if fired {
+		t.Fatal("fired on the rise")
 	}
 	fired, state = fire(t, set, cold, state, t2("10:03"))
 	if fired {
@@ -561,12 +575,16 @@ func TestParseDurationForms(t *testing.T) {
 func TestForCountsWallClockNotTicks(t *testing.T) {
 	set := one("r", "<", 180)
 	set.Rules[0].For = "5m"
-	fired, state := fire(t, set, cold, NewState(), t2("10:00"))
+	fired, state := fire(t, set, warm, NewState(), t2("10:00"))
 	if fired {
 		t.Fatal("priming tick fired")
 	}
-	// No evaluations between 10:00 and 10:06 — a stalled loop, a restart of the
-	// poller, a long refresh.
+	fired, state = fire(t, set, cold, state, t2("10:01"))
+	if fired {
+		t.Fatal("fired on the rise")
+	}
+	// No evaluations between 10:01 and 10:06 — a stalled loop, a restart of the
+	// poller, a long refresh. The hold is wall-clock, so it still counts.
 	fired, _ = fire(t, set, cold, state, t2("10:06"))
 	if !fired {
 		t.Fatal("the hold did not count across the gap in ticks")
@@ -616,5 +634,223 @@ func TestScheduleSurvivesTheClockChange(t *testing.T) {
 	}
 	if !inside {
 		t.Error("02:30 on the autumn jump is not inside 22:00–06:00")
+	}
+}
+
+// A window that crosses midnight belongs to the day it opened on. With
+// days=["fri"], Friday 22:00–Saturday 06:00 is one window: checking "now's"
+// weekday made the night stop dead at midnight, and a level-mode rule stopped
+// maintaining the device for the second half of the night.
+func TestOvernightWindowBelongsToTheDayItOpened(t *testing.T) {
+	s := &Schedule{From: "22:00", To: "06:00", Days: []string{"fri"}}
+	// 2026-11-27 is a Friday, 2026-11-28 a Saturday.
+	cases := []struct {
+		when string
+		want bool
+	}{
+		{"2026-11-27 23:00", true},  // Friday night
+		{"2026-11-28 02:00", true},  // Saturday early morning, Friday's window
+		{"2026-11-28 23:00", false}, // Saturday night
+		{"2026-11-27 02:00", false}, // Friday early morning, Thursday's window
+	}
+	for _, c := range cases {
+		when, err := time.ParseInLocation("2006-01-02 15:04", c.when, msk)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.Within(when)
+		if err != nil {
+			t.Fatalf("%s: %v", c.when, err)
+		}
+		if got != c.want {
+			t.Errorf("%s: within = %v, want %v", c.when, got, c.want)
+		}
+	}
+}
+
+// The plain window keeps its meaning: a day list with a same-day window is
+// checked against that day alone.
+func TestSameDayWindowChecksItsOwnDay(t *testing.T) {
+	s := &Schedule{From: "09:00", To: "17:00", Days: []string{"sat"}}
+	// 2026-11-25 is a Wednesday, 2026-11-28 a Saturday.
+	wed, _ := time.ParseInLocation("2006-01-02 15:04", "2026-11-25 10:00", msk)
+	sat, _ := time.ParseInLocation("2006-01-02 15:04", "2026-11-28 10:00", msk)
+	if inside, _ := s.Within(wed); inside {
+		t.Error("a Saturday-only window matched on Wednesday")
+	}
+	if inside, _ := s.Within(sat); !inside {
+		t.Error("a Saturday-only window did not match on Saturday")
+	}
+}
+
+// A missing reading in the first condition must not hide a definite false in the
+// second. The old code returned "unknown" at the first gap, so the trigger stayed
+// true from its previous run, kept its `since`, and the next real rise was
+// swallowed: the rule fired once and never again for that run.
+func TestMissingReadingDoesNotHideALaterFalse(t *testing.T) {
+	set := Set{Rules: []Rule{{
+		ID: "r", Name: "r", Enabled: true,
+		// The battery condition is deliberately first.
+		When: []Condition{
+			{Device: "sensor", Code: "battery", Op: "!=", Value: "low"},
+			{Device: "sensor", Code: "temp", Op: "<", Value: 180},
+		},
+		Actions: []Action{{Kind: ActionCommand, Device: "plug", Code: "switch_1", Value: true}},
+	}}}
+
+	both := readings(map[string]map[string]any{"sensor": {"temp": float64(150), "battery": "high"}})
+	// Temperature reported, battery gone.
+	batteryGone := readings(map[string]map[string]any{"sensor": {"temp": float64(250)}})
+
+	// Prime with the temperature above the threshold: the rule is false, so the
+	// later rise is a real one.
+	warmReading := readings(map[string]map[string]any{"sensor": {"temp": float64(250), "battery": "high"}})
+	fired, state := fire(t, set, warmReading, NewState(), t2("10:00"))
+	if fired {
+		t.Fatal("priming tick fired")
+	}
+	fired, state = fire(t, set, both, state, t2("10:01"))
+	if !fired {
+		t.Fatal("did not fire when both conditions held")
+	}
+
+	// It got warm while the battery sensor was offline: unknown, so the run is
+	// not ended.
+	fired, state = fire(t, set, batteryGone, state, t2("10:02"))
+	if fired {
+		t.Fatal("fired while a reading was missing")
+	}
+	// Now it is cold again and the battery is back. This is a new run and must
+	// fire: the false temperature reading while the battery was missing is a fact
+	// that ended the previous run.
+	fired, _ = fire(t, set, both, state, t2("10:03"))
+	if !fired {
+		t.Fatal("the new rise was swallowed — a missing reading hid the false one")
+	}
+}
+
+// A closed window ends the run even when a reading is missing: morning is a fact
+// whether or not the thermometer can be reached.
+func TestClosedWindowEndsTheRunDespiteAMissingReading(t *testing.T) {
+	set := Set{Rules: []Rule{{
+		ID: "r", Name: "r", Enabled: true,
+		When:    []Condition{{Device: "sensor", Code: "temp", Op: "<", Value: 180}},
+		At:      &Schedule{From: "22:00", To: "06:00"},
+		Actions: []Action{{Kind: ActionCommand, Device: "plug", Code: "switch_1", Value: true}},
+	}}}
+	cold := readings(map[string]map[string]any{"sensor": {"temp": float64(150)}})
+	gone := readings(map[string]map[string]any{"sensor": {}})
+
+	// Prime before the window opens, then step inside it: the entry is the rise.
+	_, state := fire(t, set, cold, NewState(), t2("21:00"))
+	fired, state := fire(t, set, cold, state, t2("22:01"))
+	if !fired {
+		t.Fatal("did not fire inside the window")
+	}
+	// Morning, sensor offline. The window closed, so the run ended.
+	fired, state = fire(t, set, gone, state, t2("07:00"))
+	if fired {
+		t.Fatal("fired outside the window")
+	}
+	// Next night, back inside — a new run, and it fires. The date has to move:
+	// the same clock time on the same day is the same instant.
+	nextNight := time.Date(2026, 11, 26, 23, 0, 0, 0, msk)
+	fired, _ = fire(t, set, cold, state, nextNight)
+	if !fired {
+		t.Fatal("the next night's rise was swallowed")
+	}
+}
+
+// A rule whose comparison cannot be carried out is reported, not treated as a
+// condition that is simply false. Silence here is the worst outcome: the rule
+// looks enabled, the journal stays empty, and nothing ever happens.
+func TestUnevaluableRuleIsReported(t *testing.T) {
+	set := Set{Rules: []Rule{{
+		ID: "bad", Name: "bad", Enabled: true,
+		When:    []Condition{{Device: "sensor", Code: "state", Op: ">", Value: "low"}},
+		Actions: []Action{{Kind: ActionCommand, Device: "plug", Code: "switch_1", Value: true}},
+	}}}
+	r := readings(map[string]map[string]any{"sensor": {"state": "middle"}})
+	decisions, _, errs := Evaluate(set, r, NewState(), t2("10:00"), msk)
+	if len(decisions) != 0 {
+		t.Errorf("an unevaluable rule produced %d decisions", len(decisions))
+	}
+	if errs["bad"] == "" {
+		t.Fatal("the failure was not reported")
+	}
+	if !strings.Contains(errs["bad"], ">") {
+		t.Errorf("the message does not name the operator: %q", errs["bad"])
+	}
+}
+
+// The same, seen from the runner: the page's status line carries the reason.
+func TestRunnerSurfacesAnUnevaluableRule(t *testing.T) {
+	set := Set{Rules: []Rule{{
+		ID: "bad", Name: "bad", Enabled: true,
+		When:    []Condition{{Device: "sensor", Code: "state", Op: ">", Value: "low"}},
+		Actions: []Action{{Kind: ActionCommand, Device: "plug", Code: "switch_1", Value: true}},
+	}}}
+	r, _, hm, _ := newTestRunner(t, set)
+	hm.set("sensor", "state", "middle")
+	r.Step(context.Background())
+
+	_, _, lastErr := r.Status()
+	if lastErr == "" {
+		t.Fatal("the runner reported nothing for a rule it could not evaluate")
+	}
+	if !strings.Contains(lastErr, "bad") {
+		t.Errorf("the message does not name the rule: %q", lastErr)
+	}
+}
+
+// A rule that is already true when the server starts must not act: not
+// immediately, and not `for` later either. "The hold elapsed while the server was
+// down" is true but unknowable, and acting on it would turn the heater on at
+// every restart.
+func TestRuleAlreadyTrueAtStartupWaitsForTheNextRise(t *testing.T) {
+	set := one("r", "<", 180)
+	set.Rules[0].For = "5m"
+	set.Rules[0].Cooldown = ""
+
+	// Prime while already cold.
+	fired, state := fire(t, set, cold, NewState(), t2("10:00"))
+	if fired {
+		t.Fatal("priming tick fired")
+	}
+	// Long after the hold would have elapsed, still no action.
+	for _, at := range []string{"10:06", "10:30", "12:00"} {
+		fired, state = fire(t, set, cold, state, t2(at))
+		if fired {
+			t.Fatalf("acted at %s on a condition that was already true at startup", at)
+		}
+	}
+	// A real rise after the condition went false does act.
+	fired, state = fire(t, set, warm, state, t2("13:00"))
+	if fired {
+		t.Fatal("fired on the falling edge")
+	}
+	fired, state = fire(t, set, cold, state, t2("13:01"))
+	if fired {
+		t.Fatal("fired before the hold elapsed on the new run")
+	}
+	fired, _ = fire(t, set, cold, state, t2("13:07"))
+	if !fired {
+		t.Fatal("did not fire after the hold on a genuine new run")
+	}
+}
+
+// Level mode is the exception on purpose: its job is to keep the device in the
+// wanted state, so after a restart it applies on the next tick.
+func TestLevelRuleAppliesAfterStartup(t *testing.T) {
+	set := one("r", "<", 180)
+	set.Rules[0].Mode = LevelMode
+
+	fired, state := fire(t, set, cold, NewState(), t2("10:00"))
+	if fired {
+		t.Fatal("priming tick acted")
+	}
+	fired, _ = fire(t, set, cold, state, t2("10:01"))
+	if !fired {
+		t.Fatal("a level rule did not apply after startup")
 	}
 }

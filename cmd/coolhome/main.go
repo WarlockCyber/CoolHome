@@ -132,6 +132,23 @@ func run() error {
 		runner = r
 		logger.Info("rules enabled",
 			"file", cfg.RulesFile, "interval", interval.String(), "tz", loc.String())
+		// A schedule with only "from" is a one-minute window. An evaluation
+		// interval as long as that window can step over it entirely, and the rule
+		// would never fire — silently, once a day.
+		if set, err := r.Store().Get(); err == nil {
+			minutes := 0
+			for _, rule := range set.Rules {
+				if rule.At != nil && rule.At.To == "" {
+					minutes++
+				}
+			}
+			if minutes > 0 && interval >= time.Minute {
+				logger.Warn("rules: evaluation interval is a minute or longer, "+
+					"so \"at HH:MM\" rules can be stepped over; set COOLHOME_RULES_INTERVAL below 60s "+
+					"or give those rules a window (from/to)",
+					"interval", interval.String(), "rules_with_a_one_minute_window", minutes)
+			}
+		}
 	}
 
 	handler, err := httpapi.New(svc, httpapi.Options{

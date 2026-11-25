@@ -3,8 +3,9 @@ package rules
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,8 +43,28 @@ type Entry struct {
 	Actions []JournalAction `json:"actions"`
 	// Skipped is set when nothing was sent because the device was already in the
 	// wanted state. The rule still counts as fired: the condition did happen.
-	Skipped bool   `json:"skipped,omitempty"`
+	Skipped bool `json:"skipped,omitempty"`
+	// Preview marks an entry from a dry run: it says what would happen, not what
+	// did. Without the mark the page shows it under "последние срабатывания",
+	// which claims the house just did something it did not.
+	Preview bool   `json:"preview,omitempty"`
 	Error   string `json:"error,omitempty"`
+}
+
+// describeRuleErrors turns per-rule evaluation failures into one line for the
+// page: "rule r1: operator \">\" does not apply" is what tells a person their
+// rule is broken rather than waiting for a condition that never comes true.
+func describeRuleErrors(errs map[string]string) string {
+	ids := make([]string, 0, len(errs))
+	for id := range errs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, id+": "+errs[id])
+	}
+	return "не удалось вычислить правило " + strings.Join(parts, "; ")
 }
 
 // JournalAction is what one action did.
@@ -166,7 +187,7 @@ func (r *Runner) DryStep(ctx context.Context) []Decision {
 	r.mu.Lock()
 	state := r.state
 	r.mu.Unlock()
-	decisions, _ := Evaluate(set, ReadingsOf(snap.Devices), state, r.now(), r.loc)
+	decisions, _, _ := Evaluate(set, ReadingsOf(snap.Devices), state, r.now(), r.loc)
 	return decisions
 }
 
@@ -189,12 +210,15 @@ func (r *Runner) Step(ctx context.Context) {
 	state := r.state
 	r.mu.Unlock()
 
-	decisions, next := Evaluate(set, readings, state, now, r.loc)
+	decisions, next, ruleErrs := Evaluate(set, readings, state, now, r.loc)
 
 	r.mu.Lock()
 	r.state = next
 	r.lastRun = now
 	r.lastErr = ""
+	if len(ruleErrs) > 0 {
+		r.lastErr = describeRuleErrors(ruleErrs)
+	}
 	r.mu.Unlock()
 
 	if !state.Primed() {
@@ -208,41 +232,68 @@ func (r *Runner) Step(ctx context.Context) {
 
 	sent := 0
 	for _, d := range decisions {
-		if sent >= r.budget {
-			r.addEntry(Entry{
-				Time: now, RuleID: d.RuleID, Name: d.RuleName, Group: d.Group,
-				Actions: nil,
-				Error:   fmt.Sprintf("пропущено: израсходован бюджет %d действий за такт", r.budget),
-			})
-			continue
-		}
-		entry := r.apply(ctx, d, snap, now)
-		sent += len(entry.Actions)
+		entry, writes, starved := r.apply(ctx, d, snap, now, r.budget-sent)
+		sent += writes
 		r.addEntry(entry)
+		if starved {
+			// Nothing was sent because the budget was spent. The engine already
+			// recorded the firing — it cannot know the cost — so the mark is
+			// taken back: an edge rule must get its turn on the next tick rather
+			// than lose the trigger for good.
+			r.mu.Lock()
+			r.state.ForgetFiring(d.RuleID)
+			r.mu.Unlock()
+		}
 	}
 }
 
 // apply carries out one decision's actions in order. An error on one action is
 // recorded and does not stop the rest: a rule that turns on a heater and opens a
 // blind should still open the blind when the heater is outside the quota.
-func (r *Runner) apply(ctx context.Context, d Decision, snap home.Snapshot, now time.Time) Entry {
+// apply carries out a decision's actions within what is left of the tick's
+// budget. It reports how many writes actually went to the cloud — not how many
+// actions were considered: a command that was skipped as "already so" nor one
+// the cloud refused costs nothing, and counting them let a single no-op rule with
+// many actions exhaust the budget for every rule after it.
+func (r *Runner) apply(ctx context.Context, d Decision, snap home.Snapshot, now time.Time, budget int) (Entry, int, bool) {
 	entry := Entry{Time: now, RuleID: d.RuleID, Name: d.RuleName, Group: d.Group}
 	current := ReadingsOf(snap.Devices)
+	writes := 0
+	starved := false
+
 	for _, a := range d.Actions {
+		needsWrite := a.Kind == ActionScene
+		if a.Kind == ActionCommand {
+			// Idempotency: a lamp already on needs no command. Without this a
+			// level-mode rule would re-send the same value every tick and fill
+			// the cloud's request budget with writes that change nothing.
+			existing, known := current[a.Device][a.Code]
+			needsWrite = !(known && sameValue(existing, a.Value))
+		}
+		if needsWrite && writes >= budget {
+			// Out of budget for this tick. The rule keeps its turn for the next
+			// one; saying so is better than silently dropping the action.
+			rec := journalFor(a)
+			rec.Note = "пропущено: бюджет такта израсходован"
+			entry.Actions = append(entry.Actions, rec)
+			entry.Error = rec.Note
+			starved = true
+			continue
+		}
+
 		switch a.Kind {
 		case ActionScene:
 			rec := JournalAction{Kind: ActionScene, Scene: a.Scene}
 			if err := r.send(ctx, a.Scene, tuya.Command{Code: sceneTriggerCode, Value: true}); err != nil {
 				rec.Note = err.Error()
 				entry.Error = err.Error()
+			} else {
+				writes++
 			}
 			entry.Actions = append(entry.Actions, rec)
 		case ActionCommand:
 			rec := JournalAction{Kind: ActionCommand, Device: a.Device, Code: a.Code, Value: a.Value}
-			// Idempotency: a lamp already on needs no command. Without this a
-			// level-mode rule would re-send the same value every tick and fill
-			// the cloud's request budget with writes that change nothing.
-			if existing, ok := current[a.Device][a.Code]; ok && sameValue(existing, a.Value) {
+			if !needsWrite {
 				entry.Skipped = true
 				rec.Note = "уже так"
 				entry.Actions = append(entry.Actions, rec)
@@ -251,11 +302,21 @@ func (r *Runner) apply(ctx context.Context, d Decision, snap home.Snapshot, now 
 			if err := r.send(ctx, a.Device, tuya.Command{Code: a.Code, Value: a.Value}); err != nil {
 				rec.Note = err.Error()
 				entry.Error = err.Error()
+			} else {
+				writes++
 			}
 			entry.Actions = append(entry.Actions, rec)
 		}
 	}
-	return entry
+	return entry, writes, starved
+}
+
+// journalFor describes an action that was not attempted.
+func journalFor(a Action) JournalAction {
+	if a.Kind == ActionScene {
+		return JournalAction{Kind: ActionScene, Scene: a.Scene}
+	}
+	return JournalAction{Kind: ActionCommand, Device: a.Device, Code: a.Code, Value: a.Value}
 }
 
 func (r *Runner) send(ctx context.Context, deviceID string, cmd tuya.Command) error {

@@ -182,3 +182,24 @@ test('isZeroDuration recognises the spellings of "no wait"', () => {
     assert.strictEqual(rules.isZeroDuration(real), false, real);
   }
 });
+
+test('a decimal comma is a number, not text', () => {
+  // A Russian keyboard writes 18,5. As text it would never match a numeric
+  // reading, and the rule would look enabled and do nothing for ever.
+  assert.strictEqual(rules.parseValue('18,5'), 18.5);
+  assert.strictEqual(rules.parseValue(' -0,25 '), -0.25);
+  // A comma between words is not a number.
+  assert.strictEqual(rules.parseValue('а,б'), 'а,б');
+  assert.strictEqual(rules.parseValue('1,2,3'), '1,2,3');
+});
+
+test('a hand-written time is padded for the input', () => {
+  // <input type="time"> only accepts zero-padded HH:MM; "7:30" made the field
+  // show empty, and saving then dropped the schedule without a word.
+  assert.strictEqual(rules.clockValue('7:30'), '07:30');
+  assert.strictEqual(rules.clockValue('07:30'), '07:30');
+  assert.strictEqual(rules.clockValue('22:00'), '22:00');
+  assert.strictEqual(rules.clockValue('7:30:15'), '07:30');
+  assert.strictEqual(rules.clockValue(''), '');
+  assert.strictEqual(rules.clockValue('не время'), '');
+});

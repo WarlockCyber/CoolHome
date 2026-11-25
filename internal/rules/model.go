@@ -214,30 +214,42 @@ func (s *Schedule) Within(t time.Time) (bool, error) {
 			return false, err
 		}
 	}
-	if len(s.Days) > 0 {
-		day := strings.ToLower(t.Format("Mon"))[:3]
-		found := false
-		for _, d := range s.Days {
-			if strings.ToLower(strings.TrimSpace(d)) == day {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false, nil
-		}
-	}
 	sec := t.Hour()*3600 + t.Minute()*60 + t.Second()
 	if from == to {
 		// A zero-length window would never be true; treat it as the whole day so
 		// a rule does not silently stop working after a typo.
-		return true, nil
+		return s.dayMatches(t), nil
 	}
 	if from < to {
-		return sec >= from && sec < to, nil
+		return s.dayMatches(t) && sec >= from && sec < to, nil
 	}
-	// Past midnight: 22:00–06:00 is true from 22:00 to 23:59 and 00:00 to 06:00.
-	return sec >= from || sec < to, nil
+	// Past midnight: 22:00–06:00 is true from 22:00 to 23:59 and from 00:00 to
+	// 06:00 the next morning. Each half is checked against the day the window
+	// opened on, not against "now": with days=["fri"], Saturday 02:00 belongs to
+	// Friday's window, and Friday 02:00 belongs to Thursday's — checking the
+	// current day alone would make the night stop at midnight.
+	if sec >= from {
+		return s.dayMatches(t), nil
+	}
+	if sec < to {
+		return s.dayMatches(t.AddDate(0, 0, -1)), nil
+	}
+	return false, nil
+}
+
+// dayMatches reports whether the schedule allows the weekday of t. An empty list
+// means every day.
+func (s *Schedule) dayMatches(t time.Time) bool {
+	if len(s.Days) == 0 {
+		return true
+	}
+	day := strings.ToLower(t.Format("Mon"))[:3]
+	for _, d := range s.Days {
+		if strings.ToLower(strings.TrimSpace(d)) == day {
+			return true
+		}
+	}
+	return false
 }
 
 // Normalize validates a set and returns its canonical form: trimmed names,

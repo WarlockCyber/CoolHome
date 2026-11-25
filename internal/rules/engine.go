@@ -87,6 +87,14 @@ func (s State) LastFired(id string) (time.Time, bool) {
 	return t, ok
 }
 
+// ForgetFiring removes a firing mark. The engine marks a rule as fired when it
+// decides it, before anyone knows whether the action will be sent; when the
+// runner refuses an action — the per-tick budget is spent — that mark has to go,
+// or an edge rule starved by the budget never fires for that trigger at all.
+func (s State) ForgetFiring(id string) {
+	delete(s.fired, id)
+}
+
 // Decision is one rule firing in one tick.
 type Decision struct {
 	RuleID   string
@@ -106,7 +114,7 @@ type Decision struct {
 // without a network, a clock or a device.
 //
 // loc is the location the schedule is read in; nil means time.Local.
-func Evaluate(set Set, readings Readings, prev State, now time.Time, loc *time.Location) ([]Decision, State) {
+func Evaluate(set Set, readings Readings, prev State, now time.Time, loc *time.Location) ([]Decision, State, map[string]string) {
 	if loc == nil {
 		loc = time.Local
 	}
@@ -115,6 +123,11 @@ func Evaluate(set Set, readings Readings, prev State, now time.Time, loc *time.L
 	local := now.In(loc)
 
 	var decisions []Decision
+	// errs names the rules whose trigger could not be worked out. A rule that
+	// silently evaluates to "false" for ever — an operator that does not apply to
+	// the value, a decimal typed with a comma — looks enabled and does nothing,
+	// which is the worst of both.
+	errs := map[string]string{}
 	for _, rule := range set.Rules {
 		if !rule.Enabled || !set.GroupEnabled(rule.Group) {
 			// A switched-off rule keeps no memory: turning it back on starts a
@@ -124,9 +137,11 @@ func Evaluate(set Set, readings Readings, prev State, now time.Time, loc *time.L
 
 		truth, err := rule.truth(readings, local)
 		if err != nil {
-			// A malformed schedule or comparison cannot be acted on. It is
-			// reported by validation at save time; if one slips through, the rule
-			// is skipped for this tick rather than fired on a guess.
+			// A malformed schedule or comparison cannot be acted on: the rule is
+			// skipped for this tick rather than fired on a guess, and the reason
+			// is reported so it does not look like a condition that is simply
+			// false.
+			errs[rule.ID] = err.Error()
 			continue
 		}
 
@@ -164,16 +179,26 @@ func Evaluate(set Set, readings Readings, prev State, now time.Time, loc *time.L
 			continue
 		}
 
+		// The baseline decision comes before the hold: on the first tick the
+		// condition has only just been observed, and "it held for five minutes"
+		// cannot be known. A rule that is already true at startup is recorded as
+		// if it had just fired, so it waits for the next real rise instead of
+		// acting `for` later — acting on it would turn the heater on at every
+		// restart.
+		if !prev.primed {
+			// Level mode is the exception on purpose: its job is to keep the
+			// device in the wanted state, so after a restart it applies on the
+			// next tick.
+			if rule.Mode != LevelMode {
+				next.fired[rule.ID] = now
+			}
+			continue
+		}
+
 		hold, _ := ParseDuration(rule.For)
 		if hold > 0 && now.Sub(since) < hold {
 			// Not held long enough yet. This is also the debounce: a reading that
 			// flaps around the threshold never accumulates the hold time.
-			continue
-		}
-
-		if !prev.primed {
-			// First tick: record, do not act. After a restart every rule whose
-			// condition happens to hold would otherwise fire at once.
 			continue
 		}
 
@@ -205,32 +230,51 @@ func Evaluate(set Set, readings Readings, prev State, now time.Time, loc *time.L
 			Actions:  rule.Actions,
 		})
 	}
-	return decisions, next
+	return decisions, next, errs
 }
 
 // truth evaluates a rule's trigger: all conditions hold, and the schedule (when
 // present) is inside its window. Either part missing is "no constraint"; a
 // reading that is missing makes the whole thing unknown.
 func (r Rule) truth(readings Readings, now time.Time) (Truth, error) {
-	result := True
+	// A missing reading makes its own condition unknown; it does not decide the
+	// whole trigger. Returning at the first gap meant that a condition which was
+	// definitely false, listed after a missing one, was never seen — the rule
+	// stayed "true" from its previous run, kept its `since`, and the next real
+	// rise was treated as the same run and never fired.
+	sawUnknown := false
+	sawFalse := false
+	// A comparison that cannot be carried out is not the same as a missing
+	// reading: the second is a gap that will close, the first is a rule that will
+	// never work. It is remembered and reported rather than swallowed into
+	// "unknown" and left to look like a condition that is merely false.
+	var firstErr error
 	for _, c := range r.When {
 		value, ok := readings[c.Device][c.Code]
 		if !ok || value == nil {
-			return Unknown, nil
+			sawUnknown = true
+			continue
 		}
-		ok, err := compare(value, c.Op, c.Value)
+		matched, err := compare(value, c.Op, c.Value)
 		if err != nil {
-			return Unknown, err
+			sawUnknown = true
+			if firstErr == nil {
+				firstErr = fmt.Errorf("%s.%s: %w", c.Device, c.Code, err)
+			}
+			continue
 		}
-		if !ok {
-			// A definite false beats an unknown from another condition: the
-			// trigger is not true, and that is a fact.
-			result = False
+		if !matched {
+			sawFalse = true
 		}
 	}
-	if result == False {
+	// A definite false anywhere settles it: the trigger is not true, and that is
+	// a fact about the house, not a gap in the readings.
+	if sawFalse {
 		return False, nil
 	}
+	// The schedule is checked even when a reading is missing: a window that
+	// closed is also a fact, and "cold and at night" must end when morning comes
+	// whether or not the thermometer is reachable.
 	if r.At != nil {
 		within, err := r.At.Within(now)
 		if err != nil {
@@ -239,6 +283,9 @@ func (r Rule) truth(readings Readings, now time.Time) (Truth, error) {
 		if !within {
 			return False, nil
 		}
+	}
+	if sawUnknown {
+		return Unknown, firstErr
 	}
 	return True, nil
 }

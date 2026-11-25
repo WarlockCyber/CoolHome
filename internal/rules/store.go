@@ -144,9 +144,37 @@ func (s *Store) readLocked() (Set, error) {
 	// clear message instead of a surprise on every evaluation.
 	clean, err := Normalize(set)
 	if err != nil {
+		// A file that names a group which is no longer there must not make the
+		// whole set unreadable: every rule would stop running and the page could
+		// not even show the list to fix it. The references are dropped and the
+		// rules keep running ungrouped — losing a group must not silently stop an
+		// automation.
+		if relaxed, ok := relaxUnknownGroups(set); ok {
+			if clean, err2 := Normalize(relaxed); err2 == nil {
+				return clean, nil
+			}
+		}
 		return Set{}, fmt.Errorf("rules: %s: %w", s.path, err)
 	}
 	return clean, nil
+}
+
+// relaxUnknownGroups clears group references that name no group, reporting
+// whether anything changed.
+func relaxUnknownGroups(set Set) (Set, bool) {
+	known := make(map[string]bool, len(set.Groups))
+	for _, g := range set.Groups {
+		known[g.Name] = true
+	}
+	out := copySet(set)
+	changed := false
+	for i := range out.Rules {
+		if out.Rules[i].Group != "" && !known[out.Rules[i].Group] {
+			out.Rules[i].Group = ""
+			changed = true
+		}
+	}
+	return out, changed
 }
 
 // writeLocked writes atomically: a crash mid-write must not leave a truncated

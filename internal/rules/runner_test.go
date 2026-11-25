@@ -322,3 +322,95 @@ func TestNewRunnerRequiresItsParts(t *testing.T) {
 		}
 	}
 }
+
+// A rule whose target is already in the wanted state sends nothing. Counting its
+// "уже так" actions against the budget let one no-op level rule with many actions
+// starve every rule after it, indefinitely.
+func TestNoOpRuleDoesNotEatTheBudget(t *testing.T) {
+	set := Set{Rules: []Rule{
+		{
+			ID: "noop", Name: "noop", Enabled: true, Mode: LevelMode,
+			When:    []Condition{{Device: "sensor", Code: "temp", Op: "<", Value: 180}},
+			Actions: []Action{{Kind: ActionCommand, Device: "already", Code: "switch_1", Value: true}},
+		},
+		{
+			ID: "real", Name: "real", Enabled: true,
+			When:    []Condition{{Device: "sensor", Code: "temp", Op: "<", Value: 180}},
+			Actions: []Action{{Kind: ActionCommand, Device: "fresh", Code: "switch_1", Value: true}},
+		},
+	}}
+	store := New("")
+	if _, err := store.Save(set); err != nil {
+		t.Fatal(err)
+	}
+	exec := &fakeExec{fail: map[string]error{}}
+	hm := &fakeHome{}
+	cl := &clock{t: t2("10:00")}
+	r, err := NewRunner(Options{
+		Store: store, Executor: exec, Snapshot: hm.snapshot,
+		Interval: time.Minute, Location: msk, Now: cl.now, Budget: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Prime with the condition false, so the later step is a real rise.
+	hm.set("sensor", "temp", float64(250))
+	hm.set("already", "switch_1", true)
+	r.Step(context.Background())
+
+	cl.advance(time.Minute)
+	hm.set("sensor", "temp", float64(150))
+	r.Step(context.Background())
+
+	if exec.sentCount() != 1 || !strings.Contains(exec.sent[0], "fresh") {
+		t.Fatalf("sent %v, want the real rule's command: a no-op must cost nothing", exec.sent)
+	}
+}
+
+// A rule dropped by the budget must keep its turn: the engine marks a firing
+// before the cost is known, and an edge rule that lost that mark would never fire
+// for that trigger at all.
+func TestBudgetStarvedRuleKeepsItsTurn(t *testing.T) {
+	set := Set{Rules: []Rule{
+		{
+			ID: "first", Name: "first", Enabled: true,
+			When:    []Condition{{Device: "sensor", Code: "temp", Op: "<", Value: 180}},
+			Actions: []Action{{Kind: ActionCommand, Device: "a", Code: "switch_1", Value: true}},
+		},
+		{
+			ID: "second", Name: "second", Enabled: true,
+			When:    []Condition{{Device: "sensor", Code: "temp", Op: "<", Value: 180}},
+			Actions: []Action{{Kind: ActionCommand, Device: "b", Code: "switch_1", Value: true}},
+		},
+	}}
+	store := New("")
+	if _, err := store.Save(set); err != nil {
+		t.Fatal(err)
+	}
+	exec := &fakeExec{fail: map[string]error{}}
+	hm := &fakeHome{}
+	cl := &clock{t: t2("10:00")}
+	r, err := NewRunner(Options{
+		Store: store, Executor: exec, Snapshot: hm.snapshot,
+		Interval: time.Minute, Location: msk, Now: cl.now, Budget: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hm.set("sensor", "temp", float64(250))
+	r.Step(context.Background())
+
+	cl.advance(time.Minute)
+	hm.set("sensor", "temp", float64(150))
+	r.Step(context.Background())
+	if exec.sentCount() != 1 {
+		t.Fatalf("sent %d, want 1 (budget)", exec.sentCount())
+	}
+
+	// The second rule was starved. On the next tick its command must go.
+	cl.advance(time.Minute)
+	r.Step(context.Background())
+	if exec.sentCount() != 2 || !strings.Contains(exec.sent[1], "b") {
+		t.Fatalf("sent %v; the starved rule lost its turn", exec.sent)
+	}
+}
