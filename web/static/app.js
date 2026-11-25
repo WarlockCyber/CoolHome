@@ -1744,6 +1744,14 @@
     return out;
   }
 
+  // groupEnabled answers whether a group is switched on. A rule naming a group
+  // the page has not seen yet is treated as ungrouped, like the server does.
+  function groupEnabled(name) {
+    const groups = (state.rules && state.rules.groups) || [];
+    const found = groups.find((g) => g.name === name);
+    return found ? Boolean(found.enabled) : true;
+  }
+
   function renderRules() {
     const data = state.rules;
     if (!data) {
@@ -1821,11 +1829,16 @@
   function ruleRow(rule) {
     const summary = ruleHelp.summarize(rule, ruleLabel);
     const on = Boolean(rule.enabled);
+    // A rule can be switched on while its group is off. Saying so is the
+    // difference between "this is broken" and "this is paused with the group".
+    const groupOff = Boolean(rule.group) && !groupEnabled(rule.group);
     const groupBadge = rule.group
-      ? '<span class="rule-group">' + esc(rule.group) + '</span>'
+      ? '<span class="rule-group' + (groupOff ? ' rule-group--off' : '') + '">' +
+          esc(rule.group) + (groupOff ? ' · выключена' : '') +
+        '</span>'
       : '';
     return (
-      '<li class="rule' + (on ? '' : ' rule--off') + '" data-rule-row="' + esc(rule.id) + '">' +
+      '<li class="rule' + (on && !groupOff ? '' : ' rule--off') + '" data-rule-row="' + esc(rule.id) + '">' +
         '<div class="rule-main">' +
           '<div class="rule-name">' + esc(rule.name) + groupBadge + '</div>' +
           '<div class="rule-trigger">' + esc(summary.trigger || '—') + '</div>' +
