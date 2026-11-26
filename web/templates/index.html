@@ -36,7 +36,6 @@
         <button type="button" class="tab" role="tab" id="tab-rules"
           data-tab="rules" aria-selected="false" aria-controls="rules">Правила</button>
       </nav>
-      <button id="customize" class="ghost" type="button" aria-pressed="false">Пульт</button>
       <button id="refresh" class="ghost" type="button">Обновить</button>
     </div>
   </header>
@@ -61,7 +60,14 @@
        styles.css), чтобы устройства не оказались за списочной колонкой. -->
   <div id="workspace" class="workspace">
     <aside id="side" class="side-panel" aria-label="Панель устройств" hidden>
-      <h2 class="side-title">Панель <span id="side-count" class="side-count"></span></h2>
+      <div class="side-head">
+        <h2 class="side-title">Панель <span id="side-count" class="side-count"></span></h2>
+        <!-- Кнопка живёт здесь, а не в шапке: она правит только эту колонку.
+             Раньше она включала редактор пульта и подменяла сетку виджетами —
+             с группами это перестало иметь смысл. -->
+        <button type="button" class="ghost side-edit-toggle" id="panel-edit"
+                aria-pressed="false">Изменить</button>
+      </div>
       <div id="side-list" class="side-list"></div>
     </aside>
     <main>

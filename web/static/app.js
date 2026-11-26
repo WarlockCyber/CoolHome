@@ -279,7 +279,13 @@
     // groupTab is the selected tab. Favourites by default: a wall tablet is
     // opened to press the usual things, not to see all 43 cards.
     groupTab: groupLib.defaultTab(),
+    // editMode edits the remote (the widgets that replace the grid). It has no
+    // button any more: it is reachable by bookmark (?edit=1) only.
     editMode: false,
+    // panelEdit edits the side panel — add, remove, reorder. It is the panel's
+    // own switch and touches nothing else: with groups on the main screen, one
+    // button that replaced the grid with a remote editor no longer made sense.
+    panelEdit: false,
     // draft is the working copy while editing; null when not editing.
     draft: null,
     dragIndex: null,
@@ -311,7 +317,6 @@
     banner: document.getElementById('banner'),
     empty: document.getElementById('empty'),
     refresh: document.getElementById('refresh'),
-    customize: document.getElementById('customize'),
     active: document.getElementById('active'),
     activeList: document.getElementById('active-list'),
     activeCount: document.getElementById('active-count'),
@@ -330,6 +335,7 @@
     problemMessage: document.getElementById('problem-message'),
     problemLink: document.getElementById('problem-link'),
     problemMute: document.getElementById('problem-mute'),
+    panelEdit: document.getElementById('panel-edit'),
     groupTabs: document.getElementById('group-tabs'),
     groupEmpty: document.getElementById('group-empty'),
     groupDialog: document.getElementById('group-dialog'),
@@ -716,8 +722,6 @@
     // An empty tab is not an empty home: say which it is, or a tab that holds
     // nothing looks broken.
     renderGroupEmpty(gridVisible, devices.length);
-    els.customize.textContent = state.editMode ? 'Готово' : 'Изменить';
-    els.customize.setAttribute('aria-pressed', state.editMode ? 'true' : 'false');
 
     if (restore) {
       const primary = restore.inPanel ? els.sideList : els.grid;
@@ -790,12 +794,17 @@
   // glance — so it is its own list, and it stays put when the tab changes.
   function renderPanel() {
     const ids = state.panel;
-    // An empty panel is not shown at all: a permanent empty column beside the
-    // grid would be a hole in the layout. While editing it is shown, because
-    // that is the only place a card is added from.
-    const visible = ids.length > 0 || state.editMode;
+    // An empty panel is not shown: a permanent empty column beside the grid
+    // would be a hole in the layout. While it is being edited it is shown,
+    // because that is the only place a card is added from — and an empty panel
+    // offers "＋ Панель" in the strip to get there.
+    const editing = state.panelEdit;
+    const visible = ids.length > 0 || editing;
     els.side.hidden = !visible;
-    els.side.classList.toggle('side-panel--editing', state.editMode);
+    els.side.classList.toggle('side-panel--editing', editing);
+    els.panelEdit.textContent = editing ? 'Готово' : 'Изменить';
+    els.panelEdit.setAttribute('aria-pressed', editing ? 'true' : 'false');
+    els.panelEdit.hidden = !visible;
     els.workspace.classList.toggle('workspace--split', visible);
     if (!visible) {
       els.sideList.innerHTML = '';
@@ -819,19 +828,19 @@
         // a stray tap aimed at ✕ must not toggle a light. The grid has the same
         // rule — editing replaces its cards with the editor, so nothing there
         // can be pressed either.
-        if (state.editMode && device) {
+        if (editing && device) {
           body = '<div class="side-card" inert>' + body + '</div>';
         }
-        const chrome = state.editMode ? sideChrome(i, ids.length, id) : '';
+        const chrome = editing ? sideChrome(i, ids.length, id) : '';
         return (
           '<div class="side-item" data-side-id="' + esc(id) + '"' +
-            (state.editMode ? ' role="group" aria-label="' + esc(sideName(id)) + '"' : '') + '>' +
+            (editing ? ' role="group" aria-label="' + esc(sideName(id)) + '"' : '') + '>' +
             body + chrome +
           '</div>'
         );
       })
       .join('');
-    const add = state.editMode && ids.length < state.maxPanel ? sideAddTile(ids.length === 0) : '';
+    const add = editing && ids.length < state.maxPanel ? sideAddTile(ids.length === 0) : '';
     els.sideList.innerHTML = items + add;
   }
 
@@ -928,7 +937,7 @@
     const active = activeDevices();
     // The panel is for the remote; while editing it only gets in the way, and
     // a scene list has nothing to report.
-    if (!active.length || state.editMode) {
+    if (!active.length || state.panelEdit || state.editMode) {
       els.active.hidden = true;
       els.activeList.innerHTML = '';
       return;
@@ -1963,12 +1972,21 @@
             ' aria-label="Удалить группу">✕</button>' +
         '</span>'
       : '';
+    // An empty panel is not drawn, so its "Изменить" would be unreachable. This
+    // is the one entry point that has to live outside it, and it appears only
+    // while there is no panel at all: once the column exists, its own button is
+    // the way in.
+    const openPanel =
+      state.panel.length === 0
+        ? '<button type="button" class="group-tab group-tab--add" data-panel-open="1"' +
+          ' aria-label="Показать панель и добавить карточки">＋ Панель</button>'
+        : '';
     // Two parts: the tabs scroll sideways, the actions stay put. On a phone the
     // strip is wider than the screen, and "＋ Группа" at the far end of it was a
     // control you had to go looking for.
     els.groupTabs.innerHTML =
       '<div class="group-tabs-scroll">' + buttons + '</div>' +
-      '<div class="group-tabs-side">' + add + manage + '</div>';
+      '<div class="group-tabs-side">' + openPanel + add + manage + '</div>';
   }
 
   function renderGroupEmpty(visible, deviceCount) {
@@ -3244,9 +3262,15 @@
     // The scene details cost one request per scene, so they are fetched when the
     // tab is opened rather than on every poll.
     if (name === 'scenes' && !state.scenesFromCloud) loadSceneDetails().then(render);
-    // Editing lives on the devices tab; leaving it must not leave the grid in a
-    // half-edited state.
-    if (name !== 'devices' && state.editMode) stopEditing();
+    // Editing lives on the devices tab; leaving it must not leave the grid or the
+    // panel in a half-edited state.
+    if (name !== 'devices') {
+      if (state.editMode) stopEditing();
+      if (state.panelEdit) {
+        state.panelEdit = false;
+        if (state.picker === 'panel') closeSheet();
+      }
+    }
     render();
     // Keep the address in step so a reload returns to the same tab.
     const url = new URL(location.href);
@@ -3301,9 +3325,13 @@
     if (button) send(button.dataset.id, { code: button.dataset.code, value: true });
   });
 
-  els.customize.addEventListener('click', () => {
-    if (state.editMode) stopEditing();
-    else startEditing();
+  // The panel's own switch: it edits the column and nothing else. The remote
+  // keeps its editor, reachable by ?edit=1, because a bookmark is how a wall
+  // tablet is set up and the header button no longer exists.
+  els.panelEdit.addEventListener('click', () => {
+    state.panelEdit = !state.panelEdit;
+    if (!state.panelEdit && state.picker === 'panel') closeSheet();
+    render();
   });
 
   els.grid.addEventListener('click', (event) => {
@@ -3414,6 +3442,13 @@
     }
     if (event.target.closest('[data-group-new]')) {
       openGroupDialog();
+      return;
+    }
+    if (event.target.closest('[data-panel-open]')) {
+      // Reveal the column in its editing state: an empty column with only a
+      // header would give nothing to do.
+      state.panelEdit = true;
+      render();
       return;
     }
     const rename = event.target.closest('[data-group-rename]');
