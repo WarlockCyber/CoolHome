@@ -508,3 +508,76 @@ func TestDashboardRejectsADuplicateHiddenEntry(t *testing.T) {
 		t.Errorf("body = %s, want an explanation", raw)
 	}
 }
+
+// Groups are the tabs of the main screen and favourites are the first tab. Both
+// travel with the layout; saving them must not disturb the rest.
+func TestDashboardSavesGroupsAndFavorites(t *testing.T) {
+	srv := newDashboardServer(t, filepath.Join(t.TempDir(), "d.json"))
+	if resp, raw := putJSON(t, srv.URL+"/api/dashboard",
+		`{"widgets":[{"device_id":"d1","code":"c1"}],"names":{"d1":"Кухня"}}`); resp.StatusCode != http.StatusOK {
+		t.Fatalf("setup: %d %s", resp.StatusCode, raw)
+	}
+
+	body := `{"groups":[{"id":"g1","name":"Свет","devices":["lamp-1","lamp-2"]},` +
+		`{"id":"g2","name":"Климат"}],"favorites":["lamp-1"]}`
+	resp, raw := putJSON(t, srv.URL+"/api/dashboard", body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("groups: %d %s", resp.StatusCode, raw)
+	}
+	var out dashboardResponse
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Groups) != 2 || out.Groups[0].Name != "Свет" {
+		t.Fatalf("groups = %+v", out.Groups)
+	}
+	if len(out.Groups[0].Devices) != 2 {
+		t.Errorf("devices = %v", out.Groups[0].Devices)
+	}
+	if len(out.Favorites) != 1 || out.Favorites[0] != "lamp-1" {
+		t.Errorf("favourites = %v", out.Favorites)
+	}
+	// The rest is untouched.
+	if len(out.Widgets) != 1 || out.Names["d1"] != "Кухня" {
+		t.Errorf("saving groups disturbed the rest: %+v", out)
+	}
+	// The list is an array even when empty: the page iterates it.
+	if out.Groups == nil || out.MaxGroups == 0 || out.MaxGroupNameLen == 0 {
+		t.Errorf("groups = %v, max_groups = %d, max_group_name_len = %d", out.Groups, out.MaxGroups, out.MaxGroupNameLen)
+	}
+}
+
+// A device cannot sit in two tabs: two places to change it from that can
+// disagree after a refresh.
+func TestDashboardRejectsADeviceInTwoGroups(t *testing.T) {
+	srv := newDashboardServer(t, filepath.Join(t.TempDir(), "d.json"))
+	body := `{"groups":[{"id":"g1","name":"Свет","devices":["lamp-1"]},` +
+		`{"id":"g2","name":"Спальня","devices":["lamp-1"]}]}`
+	resp, raw := putJSON(t, srv.URL+"/api/dashboard", body)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", resp.StatusCode, raw)
+	}
+	if !strings.Contains(string(raw), "in both") {
+		t.Errorf("body = %s, want it to name the conflict", raw)
+	}
+}
+
+func TestDashboardRejectsADuplicateGroupName(t *testing.T) {
+	srv := newDashboardServer(t, filepath.Join(t.TempDir(), "d.json"))
+	body := `{"groups":[{"id":"g1","name":"Свет"},{"id":"g2","name":"свет"}]}`
+	resp, raw := putJSON(t, srv.URL+"/api/dashboard", body)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", resp.StatusCode, raw)
+	}
+}
+
+func TestDashboardStartsWithNoGroups(t *testing.T) {
+	srv := newDashboardServer(t, filepath.Join(t.TempDir(), "d.json"))
+	_, raw := getJSON(t, srv.URL+"/api/dashboard")
+	if !strings.Contains(string(raw), `"groups":[]`) {
+		t.Errorf("body = %s, want an empty groups array, not null", raw)
+	}
+	if !strings.Contains(string(raw), `"favorites":[]`) {
+		t.Errorf("body = %s, want an empty favourites array, not null", raw)
+	}
+}

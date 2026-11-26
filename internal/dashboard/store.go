@@ -88,7 +88,34 @@ type Layout struct {
 	// obsolete is a list nobody reads. Hiding is local, reversible, and leaves the
 	// cloud untouched — the scene still works from the app.
 	Hidden []string `json:"hidden,omitempty"`
+	// Groups are the tabs of the main screen: a named set of devices, in the
+	// order the user arranged them. A device belongs to at most one group —
+	// "move into a group" is a move, not a copy — and a device in no group is
+	// still reachable through the "all devices" tab.
+	Groups []Group `json:"groups,omitempty"`
+	// Favorites is the cross-cutting list shown as the first tab: a device can
+	// be a favourite and still belong to a group. That is the point of it —
+	// "what I touch every day" is not a place a device lives, it is a second
+	// view of devices that live elsewhere.
+	Favorites []string `json:"favorites,omitempty"`
 }
+
+// Group is one tab of the main screen.
+type Group struct {
+	// ID is what everything refers to; the name can be changed without touching
+	// a single assignment.
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Devices lists the group's devices in display order.
+	Devices []string `json:"devices,omitempty"`
+}
+
+// Bounds for groups. They are tabs on a wall tablet: more than a dozen and the
+// strip has to scroll, which defeats the purpose of a tab.
+const (
+	MaxGroups       = 12
+	MaxGroupNameLen = 40
+)
 
 // MaxDescLen bounds a description. It is longer than a name because it is a
 // sentence about what something does, not a heading — and still short enough to
@@ -160,7 +187,22 @@ func (s *Store) currentLocked() Layout {
 		Names:        copyNames(s.layout.Names),
 		Descriptions: copyNames(s.layout.Descriptions),
 		Hidden:       append([]string(nil), s.layout.Hidden...),
+		Groups:       copyGroups(s.layout.Groups),
+		Favorites:    append([]string(nil), s.layout.Favorites...),
 	}
+}
+
+// copyGroups copies the groups and the device lists inside them: a caller that
+// appends to one group's devices must not change the store's copy.
+func copyGroups(in []Group) []Group {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]Group, len(in))
+	for i, g := range in {
+		out[i] = Group{ID: g.ID, Name: g.Name, Devices: append([]string(nil), g.Devices...)}
+	}
+	return out
 }
 
 // copyNames copies the name map. A caller that assigns into the result must not
@@ -401,10 +443,123 @@ func Normalize(layout Layout) (Layout, error) {
 	if err != nil {
 		return Layout{}, err
 	}
+	groups, err := NormalizeGroups(layout.Groups)
+	if err != nil {
+		return Layout{}, err
+	}
+	favorites, err := NormalizeFavorites(layout.Favorites)
+	if err != nil {
+		return Layout{}, err
+	}
 	return Layout{
 		Widgets: out, Panel: panelOut, Names: names,
 		Descriptions: descriptions, Hidden: hidden,
+		Groups: groups, Favorites: favorites,
 	}, nil
+}
+
+// NormalizeGroups validates the tab strip. Two rules matter beyond the bounds:
+// a group id and a group name are each unique, and a device sits in at most one
+// group — a device in two tabs would be two places to change it from, and the
+// two could disagree after a refresh.
+func NormalizeGroups(in []Group) ([]Group, error) {
+	if len(in) > MaxGroups {
+		return nil, fmt.Errorf("%w: %d groups, max %d", ErrInvalid, len(in), MaxGroups)
+	}
+	out := make([]Group, 0, len(in))
+	ids := make(map[string]struct{}, len(in))
+	names := make(map[string]struct{}, len(in))
+	owner := make(map[string]string) // device id -> group name
+	for i, g := range in {
+		g.ID = strings.TrimSpace(g.ID)
+		g.Name = strings.TrimSpace(g.Name)
+		if g.ID == "" {
+			return nil, fmt.Errorf("%w: group %d has no id", ErrInvalid, i)
+		}
+		if len(g.ID) > 64 {
+			return nil, fmt.Errorf("%w: group id %q is longer than 64 characters", ErrInvalid, g.ID)
+		}
+		if _, dup := ids[g.ID]; dup {
+			return nil, fmt.Errorf("%w: group id %q appears twice", ErrInvalid, g.ID)
+		}
+		ids[g.ID] = struct{}{}
+		if g.Name == "" {
+			return nil, fmt.Errorf("%w: group %d has no name", ErrInvalid, i)
+		}
+		if utf8.RuneCountInString(g.Name) > MaxGroupNameLen {
+			return nil, fmt.Errorf("%w: the group name %q is longer than %d characters", ErrInvalid, g.Name, MaxGroupNameLen)
+		}
+		// Compared case-insensitively: "Свет" and "свет" as two tabs would be a
+		// puzzle, not a feature.
+		key := strings.ToLower(g.Name)
+		if _, dup := names[key]; dup {
+			return nil, fmt.Errorf("%w: a group named %q already exists", ErrInvalid, g.Name)
+		}
+		names[key] = struct{}{}
+
+		devices := make([]string, 0, len(g.Devices))
+		seen := make(map[string]struct{}, len(g.Devices))
+		for _, id := range g.Devices {
+			id = strings.TrimSpace(id)
+			if id == "" {
+				continue
+			}
+			if len(id) > 64 {
+				return nil, fmt.Errorf("%w: device id in group %q is longer than 64 characters", ErrInvalid, g.Name)
+			}
+			if _, dup := seen[id]; dup {
+				continue // the same device twice in one tab is a no-op
+			}
+			if other, taken := owner[id]; taken {
+				return nil, fmt.Errorf("%w: device %s is in both %q and %q", ErrInvalid, id, other, g.Name)
+			}
+			seen[id] = struct{}{}
+			owner[id] = g.Name
+			devices = append(devices, id)
+		}
+		out = append(out, Group{ID: g.ID, Name: g.Name, Devices: devices})
+	}
+	return out, nil
+}
+
+// MaxFavorites bounds the favourites list; it is a "what I use" list, not a
+// second copy of the house.
+const MaxFavorites = 40
+
+// NormalizeFavorites validates the favourites list. It is not a group: the same
+// device may be a favourite and belong to a group, so no cross-check here.
+func NormalizeFavorites(in []string) ([]string, error) {
+	if len(in) > MaxFavorites {
+		return nil, fmt.Errorf("%w: %d favourites, max %d", ErrInvalid, len(in), MaxFavorites)
+	}
+	return normalizeIDs(in, "favourite")
+}
+
+// normalizeIDs trims, de-duplicates and bounds a list of device ids.
+func normalizeIDs(in []string, what string) ([]string, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	out := make([]string, 0, len(in))
+	seen := make(map[string]struct{}, len(in))
+	for _, id := range in {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if len(id) > 64 {
+			return nil, fmt.Errorf("%w: %s id is longer than 64 characters", ErrInvalid, what)
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
 }
 
 // MaxHidden bounds the hidden list. It is generous because the list is one line

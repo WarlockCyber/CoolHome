@@ -66,7 +66,11 @@
     </aside>
     <main>
       <div id="banner" class="banner" role="alert" hidden></div>
+      <!-- Полоса групп. «Избранное» первая и выбрана на старте: планшет на
+           стене открывают, чтобы нажать привычное, а не чтобы увидеть всё. -->
+      <div id="group-tabs" class="group-tabs" aria-label="Группы устройств" hidden></div>
       <section id="devices" class="grid" role="tabpanel" aria-labelledby="tab-devices" aria-label="Устройства"></section>
+      <p id="group-empty" class="empty" hidden></p>
       <!-- Сцены, сделанные в приложении Tuya, через API не удалить: остаётся
            скрыть их здесь. Переключатель показывает скрытые, чтобы спрятанную
            сцену всегда можно было вернуть. -->
@@ -134,6 +138,28 @@
       <button type="button" class="ghost sheet-close" data-sheet="close" aria-label="Закрыть">✕</button>
     </div>
     <div id="sheet-body" class="sheet-body"></div>
+  </dialog>
+
+  <!-- Новая группа: одно поле и кнопка. Отдельное окно, потому что список
+       устройств перерисовывается опросом. -->
+  <dialog id="group-dialog" class="sheet sheet--rename" aria-labelledby="group-dialog-title">
+    <form id="group-form" method="dialog" class="rename-form">
+      <div class="sheet-head">
+        <h2 id="group-dialog-title" class="sheet-title">Новая группа</h2>
+        <button type="button" class="ghost sheet-close" data-group-close="1" aria-label="Закрыть">✕</button>
+      </div>
+      <div class="rename-body">
+        <label class="rename-label" for="group-name">Название группы</label>
+        <input id="group-name" class="rename-input" type="text" maxlength="40"
+               autocomplete="off" placeholder="Например: Свет, Климат, Первый этаж">
+        <p id="group-error" class="rename-hint" role="alert"></p>
+      </div>
+      <div class="rename-actions">
+        <span class="rename-spacer"></span>
+        <button type="button" class="ghost" data-group-close="1">Отмена</button>
+        <button type="submit" class="ghost rename-save">Создать</button>
+      </div>
+    </form>
   </dialog>
 
   <!-- Редактор сцены. Отдельное окно по той же причине, что и у правил: список
@@ -214,6 +240,7 @@
   </footer>
 
   <script src="/static/battery.js" defer></script>
+  <script src="/static/groups.js" defer></script>
   <script src="/static/figures.js" defer></script>
   <script src="/static/panel.js" defer></script>
   <script src="/static/names.js" defer></script>

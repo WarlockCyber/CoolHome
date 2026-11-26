@@ -1,6 +1,37 @@
 (() => {
   'use strict';
 
+  // The page's own modules, loaded before this script (see index.html). Declared
+  // at the top because the state below is built from them: a `const` further
+  // down is in its temporal dead zone at this point, and "Cannot access
+  // 'groupLib' before initialization" is what that looks like.
+  // Which readings become figures, and why by code rather than by unit, lives
+  // in figures.js: the rule is small enough to look right while being wrong, so
+  // it is tested outside the browser.
+  const figures = window.CoolHomeFigures;
+  const isTemperaturePoint = figures.isTemperaturePoint;
+  const isHumidityPoint = figures.isHumidityPoint;
+
+  // The side panel's list rules live in panel.js: duplicates, the limit and the
+  // reordering are easy to get subtly wrong, and a wrong one looks like a
+  // rendering glitch rather than a bug.
+  const panelList = window.CoolHomePanel;
+
+  // Local names: trimming, the bound and which widget titles follow a rename.
+  // The server applies the names themselves; these rules are what the dialog
+  // uses before anything is sent.
+  const localNames = window.CoolHomeNames;
+
+  // The rule form's helpers: value parsing, the sentence a rule reads as, and
+  // what stops a draft from being saved.
+  const ruleHelp = window.CoolHomeRules;
+
+  // Which devices deserve a coloured card because their battery is going.
+  const battery = window.CoolHomeBattery;
+
+  // Which tab shows which devices, and how a device moves between tabs.
+  const groupLib = window.CoolHomeGroups;
+
   const REFRESH_MS = 8000;
   const TOKEN_KEY = 'coolhome.token';
 
@@ -240,6 +271,14 @@
     // showHidden reveals the hidden cards for review. Not stored: a wall tablet
     // that always showed them would defeat the hiding.
     showHidden: false,
+    // groups are the tabs of the main screen; favorites is the first tab, a view
+    // across groups rather than a place a device lives.
+    groups: [],
+    favorites: [],
+    maxGroups: 12,
+    // groupTab is the selected tab. Favourites by default: a wall tablet is
+    // opened to press the usual things, not to see all 43 cards.
+    groupTab: groupLib.defaultTab(),
     editMode: false,
     // draft is the working copy while editing; null when not editing.
     draft: null,
@@ -291,6 +330,12 @@
     problemMessage: document.getElementById('problem-message'),
     problemLink: document.getElementById('problem-link'),
     problemMute: document.getElementById('problem-mute'),
+    groupTabs: document.getElementById('group-tabs'),
+    groupEmpty: document.getElementById('group-empty'),
+    groupDialog: document.getElementById('group-dialog'),
+    groupName: document.getElementById('group-name'),
+    groupError: document.getElementById('group-error'),
+    groupForm: document.getElementById('group-form'),
     scenesBar: document.getElementById('scenes-bar'),
     scenesCount: document.getElementById('scenes-count'),
     scenesToggleHidden: document.getElementById('scenes-toggle-hidden'),
@@ -380,6 +425,14 @@
       }
       if (board && Number(board.max_desc_len) > 0) state.maxDescLen = Number(board.max_desc_len);
       if (board && Array.isArray(board.hidden)) state.hidden = board.hidden;
+      if (board && Array.isArray(board.groups)) state.groups = board.groups;
+      if (board && Array.isArray(board.favorites)) state.favorites = board.favorites;
+      if (board && Number(board.max_groups) > 0) state.maxGroups = Number(board.max_groups);
+      // A tab that no longer exists (deleted elsewhere) falls back to favourites
+      // instead of showing an empty grid with no explanation.
+      if (state.groupTab !== groupLib.ALL_TAB && state.groupTab !== groupLib.FAVORITES_TAB) {
+        if (!state.groups.some((g) => g.id === state.groupTab)) state.groupTab = groupLib.defaultTab();
+      }
       state.lastSync = data.last_sync || null;
       state.error = data.error || '';
       // A reload mid-edit would throw away an unsaved layout, so it waits for
@@ -622,7 +675,8 @@
 
     // The remote is edited in place: the grid is the editor. Adding happens
     // from the tile at the end, removing from each card's own ✕.
-    if (onDevices && (state.layout.length > 0 || state.editMode)) {
+    const showingRemote = onDevices && (state.layout.length > 0 || state.editMode);
+    if (showingRemote) {
       const total = state.layout.length;
       const widgets = state.layout
         .map((w, i) => {
@@ -633,14 +687,35 @@
       els.grid.innerHTML = widgets + (state.editMode ? addTile() : '');
       els.grid.classList.add('grid--remote');
     } else if (onDevices) {
-      els.grid.innerHTML = devices.map(card).join('');
+      // The grid shows one tab, and the strip above it is the way between them.
+      // Favourites opens first: a wall tablet is opened to press the usual
+      // things, not to scroll forty-three cards.
+      const visible = groupLib.devicesFor(
+        state.groupTab,
+        state.groups,
+        state.favorites,
+        devices.map((d) => d.id),
+      );
+      const byID = new Map(devices.map((d) => [d.id, d]));
+      els.grid.innerHTML = visible
+        .map((id) => byID.get(id))
+        .filter(Boolean)
+        .map((d) => card(d))
+        .join('');
       els.grid.classList.remove('grid--remote');
     }
+    // The strip belongs to the device grid. With a remote configured the grid is
+    // widgets, and tabs above widgets would filter nothing.
+    const gridVisible = onDevices && !showingRemote;
+    renderGroupTabs(gridVisible);
     renderActive();
     renderPanel();
     els.grid.classList.toggle('grid--editing', state.editMode);
     els.empty.hidden =
       !onDevices || state.editMode || devices.length > 0 || scenes.length > 0 || Boolean(state.error);
+    // An empty tab is not an empty home: say which it is, or a tab that holds
+    // nothing looks broken.
+    renderGroupEmpty(gridVisible, devices.length);
     els.customize.textContent = state.editMode ? 'Готово' : 'Изменить';
     els.customize.setAttribute('aria-pressed', state.editMode ? 'true' : 'false');
 
@@ -875,27 +950,6 @@
 
   // Which readings become figures, and why by code rather than by unit, lives
   // in figures.js: the rule is small enough to look right while being wrong, so
-  // it is tested outside the browser.
-  const figures = window.CoolHomeFigures;
-  const isTemperaturePoint = figures.isTemperaturePoint;
-  const isHumidityPoint = figures.isHumidityPoint;
-
-  // The side panel's list rules live in panel.js: duplicates, the limit and the
-  // reordering are easy to get subtly wrong, and a wrong one looks like a
-  // rendering glitch rather than a bug.
-  const panelList = window.CoolHomePanel;
-
-  // Local names: trimming, the bound and which widget titles follow a rename.
-  // The server applies the names themselves; these rules are what the dialog
-  // uses before anything is sent.
-  const localNames = window.CoolHomeNames;
-
-  // The rule form's helpers: value parsing, the sentence a rule reads as, and
-  // what stops a draft from being saved.
-  const ruleHelp = window.CoolHomeRules;
-
-  // Which devices deserve a coloured card because their battery is going.
-  const battery = window.CoolHomeBattery;
 
   // temperatureUnit normalises Tuya's spellings to one symbol.
   function temperatureUnit(point) {
@@ -1863,6 +1917,209 @@
     if (!els.problemMute.checked || !state.problem || !state.problem.code) return;
     state.mutedProblems.add(state.problem.code);
     state.notice = state.problem.message;
+  }
+
+  // ---------- device groups ----------
+
+  // renderGroupTabs draws the strip: favourites first, then the groups, then all
+  // devices. "All devices" is always last so a device in no group is reachable:
+  // a tab strip that can hide a device is worse than no tabs.
+  function renderGroupTabs(visible) {
+    els.groupTabs.hidden = !visible;
+    if (!visible) return;
+    const strip = groupLib.tabs(state.groups, state.favorites);
+    const counts = new Map();
+    for (const t of strip) {
+      counts.set(t.id, groupLib.devicesFor(t.id, state.groups, state.favorites, state.devices.filter((d) => !isScene(d)).map((d) => d.id)).length);
+    }
+    const buttons = strip
+      .map((t) => {
+        const on = state.groupTab === t.id;
+        return (
+          '<button type="button" class="group-tab" role="tab" data-group-tab="' + esc(t.id) + '"' +
+            ' aria-selected="' + on + '">' +
+            esc(t.name) +
+            '<span class="group-tab-count">' + counts.get(t.id) + '</span>' +
+          '</button>'
+        );
+      })
+      .join('');
+    // Creating a group is part of the strip: it is the only place a tab comes
+    // from, mirrors "＋" on the panel, and is one tap away from where the tab
+    // would appear.
+    const add =
+      state.groups.length < state.maxGroups
+        ? '<button type="button" class="group-tab group-tab--add" data-group-new="1"' +
+            ' aria-label="Создать группу">＋ Группа</button>'
+        : '';
+    // Renaming and deleting belong to the selected group, not to every tab: a
+    // strip where each tab carries two buttons is a strip nobody can tap.
+    const current = state.groups.find((g) => g.id === state.groupTab);
+    const manage = current
+      ? '<span class="group-manage">' +
+          '<button type="button" class="group-tool" data-group-rename="' + esc(current.id) + '"' +
+            ' aria-label="Переименовать группу">✎</button>' +
+          '<button type="button" class="group-tool group-tool--danger" data-group-delete="' + esc(current.id) + '"' +
+            ' aria-label="Удалить группу">✕</button>' +
+        '</span>'
+      : '';
+    // Two parts: the tabs scroll sideways, the actions stay put. On a phone the
+    // strip is wider than the screen, and "＋ Группа" at the far end of it was a
+    // control you had to go looking for.
+    els.groupTabs.innerHTML =
+      '<div class="group-tabs-scroll">' + buttons + '</div>' +
+      '<div class="group-tabs-side">' + add + manage + '</div>';
+  }
+
+  function renderGroupEmpty(visible, deviceCount) {
+    if (!visible || deviceCount === 0) {
+      els.groupEmpty.hidden = true;
+      return;
+    }
+    const shown = groupLib.devicesFor(
+      state.groupTab,
+      state.groups,
+      state.favorites,
+      state.devices.filter((d) => !isScene(d)).map((d) => d.id),
+    );
+    if (shown.length > 0) {
+      els.groupEmpty.hidden = true;
+      return;
+    }
+    els.groupEmpty.hidden = false;
+    if (state.groupTab === groupLib.FAVORITES_TAB) {
+      els.groupEmpty.textContent =
+        'В избранном пока пусто. Откройте «Настройки» любой карточки и нажмите «В избранное» — ' +
+        'или перейдите на вкладку «Все устройства».';
+      return;
+    }
+    const group = state.groups.find((g) => g.id === state.groupTab);
+    els.groupEmpty.textContent = group
+      ? 'В группе «' + group.name + '» пока нет устройств. Перенести устройство можно в его ' +
+        '«Настройках» — там есть поле «Группа».'
+      : '';
+  }
+
+  // saveGroups persists the tab strip. It is one request with the whole list:
+  // creating a tab, renaming it, moving a device and deleting a tab are all one
+  // edit of the same strip, and a merge could not express "this device left that
+  // group".
+  async function saveGroups(groups, favorites) {
+    const body = { groups: groups };
+    if (favorites !== undefined) body.favorites = favorites;
+    try {
+      const data = await request('/api/dashboard', { method: 'PUT', body: JSON.stringify(body) });
+      if (data && Array.isArray(data.groups)) state.groups = data.groups;
+      if (data && Array.isArray(data.favorites)) state.favorites = data.favorites;
+      state.error = '';
+    } catch (err) {
+      state.error = 'Не удалось сохранить группы: ' + err.message;
+      await load({ silent: true });
+      return;
+    }
+    render();
+  }
+
+  function openGroupDialog() {
+    els.groupName.value = '';
+    els.groupError.textContent = '';
+    if (!els.groupDialog.open && typeof els.groupDialog.showModal === 'function') {
+      els.groupDialog.showModal();
+    }
+    els.groupName.focus();
+  }
+
+  function closeGroupDialog() {
+    if (els.groupDialog.open) els.groupDialog.close();
+  }
+
+  async function createGroupFromDialog() {
+    const res = groupLib.createGroup(state.groups, els.groupName.value);
+    if (res.error) {
+      els.groupError.textContent = res.error;
+      return;
+    }
+    const created = res.groups[res.groups.length - 1];
+    // Switch to the new tab: creating an empty group and staying on the old one
+    // gives no feedback at all.
+    state.groupTab = created.id;
+    closeGroupDialog();
+    await saveGroups(res.groups);
+  }
+
+  async function renameCurrentGroup(groupID) {
+    const group = state.groups.find((g) => g.id === groupID);
+    if (!group) return;
+    // window.prompt is avoided elsewhere for good reasons, but a rename is one
+    // short string and gets the platform's own dialog for free.
+    const answer = typeof window.prompt === 'function'
+      ? window.prompt('Название группы', group.name)
+      : null;
+    if (answer === null) return;
+    const res = groupLib.renameGroup(state.groups, groupID, answer);
+    if (res.error) {
+      state.error = res.error;
+      render();
+      return;
+    }
+    await saveGroups(res.groups);
+  }
+
+  async function deleteCurrentGroup(groupID) {
+    const group = state.groups.find((g) => g.id === groupID);
+    if (!group) return;
+    const count = (group.devices || []).length;
+    const ok = typeof window.confirm === 'function'
+      ? window.confirm(
+          'Удалить группу «' + group.name + '»?' +
+            (count ? '\nЕё устройства останутся в доме — они просто перестанут быть в группе.' : ''),
+        )
+      : true;
+    if (!ok) return;
+    const next = groupLib.deleteGroup(state.groups, groupID);
+    // The deleted tab's devices become ungrouped; they are still in the home and
+    // on "all devices", so nothing is lost by removing the tab.
+    state.groupTab = groupLib.defaultTab();
+    await saveGroups(next);
+  }
+
+  // moveDeviceToGroup puts a device into a group or, with an empty id, takes it
+  // out of every group. One device belongs to at most one group: it is a move.
+  async function moveDeviceToGroup(deviceID, groupID) {
+    const next = groupID
+      ? groupLib.move(state.groups, deviceID, groupID)
+      : groupLib.removeFromGroup(state.groups, deviceID);
+    await saveGroups(next);
+  }
+
+  async function toggleFavoriteDevice(deviceID) {
+    const next = groupLib.toggleFavorite(state.favorites, deviceID);
+    await saveGroups(state.groups, next);
+  }
+
+  // groupPicker is the "Группа" row in the settings modal.
+  function groupPicker(device) {
+    const current = groupLib.groupOf(state.groups, device.id);
+    const options = ['<option value="">— без группы —</option>'].concat(
+      state.groups.map(
+        (g) =>
+          '<option value="' + esc(g.id) + '"' + (current && current.id === g.id ? ' selected' : '') + '>' +
+            esc(g.name) +
+          '</option>',
+      ),
+    );
+    const fav = groupLib.isFavorite(state.favorites, device.id);
+    return (
+      '<div class="group-row">' +
+        '<label class="group-row-label">Группа' +
+          '<select data-device-group="' + esc(device.id) + '">' + options.join('') + '</select>' +
+        '</label>' +
+        '<button type="button" class="group-fav' + (fav ? ' group-fav--on' : '') + '"' +
+          ' data-device-fav="' + esc(device.id) + '" aria-pressed="' + fav + '">' +
+          (fav ? '★ В избранном' : '☆ В избранное') +
+        '</button>' +
+      '</div>'
+    );
   }
 
   // ---------- scene editor ----------
@@ -2840,8 +3097,12 @@
           esc(localName(device.id) ? 'сейчас: ' + localName(device.id) : '') +
         '</span>' +
       '</button>';
+    // Scenes have their own tab and are not part of the device groups, so the
+    // picker is only for real devices.
+    const groupRow = isScene(device) ? '' : groupPicker(device);
     els.sheetBody.innerHTML =
       renameButton +
+      groupRow +
       figure +
       (panel ? '<div class="sheet-controls">' + panel + '</div>' : '<p class="widget-note">Нет настроек.</p>');
   }
@@ -2942,7 +3203,24 @@
     }
   });
 
+  els.sheetBody.addEventListener('click', (event) => {
+    if (!(event.target instanceof Element)) return;
+    const fav = event.target.closest('[data-device-fav]');
+    if (fav) {
+      toggleFavoriteDevice(fav.dataset.deviceFav);
+      return;
+    }
+    // Deleting a group from inside the modal is not offered: the strip owns the
+    // tab's life, and one place for it is enough.
+  });
+
   els.sheetBody.addEventListener('change', (event) => {
+    const target = event.target;
+    // The group picker: choosing a group moves the device into it.
+    if (target instanceof HTMLSelectElement && target.dataset.deviceGroup) {
+      moveDeviceToGroup(target.dataset.deviceGroup, target.value);
+      return;
+    }
     const input = event.target;
     if (!(input instanceof HTMLInputElement) || input.type !== 'range') return;
     state.suspendUntil = 0;
@@ -3124,6 +3402,48 @@
     if (rem) d.actions.splice(Number(rem.dataset.sceneRemove), 1);
     if (!d.actions.length) d.actions.push({ device: '', code: '', value: '' });
     renderSceneEditor();
+  });
+
+  els.groupTabs.addEventListener('click', (event) => {
+    if (!(event.target instanceof Element)) return;
+    const tab = event.target.closest('[data-group-tab]');
+    if (tab) {
+      state.groupTab = tab.dataset.groupTab;
+      render();
+      return;
+    }
+    if (event.target.closest('[data-group-new]')) {
+      openGroupDialog();
+      return;
+    }
+    const rename = event.target.closest('[data-group-rename]');
+    if (rename) {
+      renameCurrentGroup(rename.dataset.groupRename);
+      return;
+    }
+    const del = event.target.closest('[data-group-delete]');
+    if (del) deleteCurrentGroup(del.dataset.groupDelete);
+  });
+
+  els.groupForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    createGroupFromDialog();
+  });
+
+  els.groupDialog.addEventListener('click', (event) => {
+    if (!(event.target instanceof Element)) return;
+    if (event.target.closest('[data-group-close]') || event.target === els.groupDialog) closeGroupDialog();
+  });
+
+  els.groupName.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeGroupDialog();
+    }
+  });
+
+  els.groupName.addEventListener('input', () => {
+    els.groupError.textContent = '';
   });
 
   els.scenesToggleHidden.addEventListener('click', () => {
