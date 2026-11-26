@@ -26,6 +26,11 @@ type dashboardResponse struct {
 	// Names are the local device names, keyed by device id. They rename the
 	// device on this installation only; the cloud keeps its own.
 	Names map[string]string `json:"names"`
+	// Descriptions are the local notes, keyed by device id: what a scene does,
+	// in words the cloud does not carry.
+	Descriptions map[string]string `json:"descriptions"`
+	// MaxDescLen is the bound the server enforces on one description.
+	MaxDescLen int `json:"max_desc_len"`
 	// MaxNameLen is the bound the server enforces on one name.
 	MaxNameLen int `json:"max_name_len"`
 }
@@ -44,14 +49,19 @@ func (s *server) newDashboardResponse(layout dashboard.Layout) dashboardResponse
 	if layout.Names == nil {
 		layout.Names = map[string]string{}
 	}
+	if layout.Descriptions == nil {
+		layout.Descriptions = map[string]string{}
+	}
 	return dashboardResponse{
-		Widgets:    layout.Widgets,
-		Panel:      layout.Panel,
-		Names:      layout.Names,
-		Editable:   s.dash.Path() != "",
-		MaxWidgets: dashboard.MaxWidgets,
-		MaxPanel:   dashboard.MaxPanel,
-		MaxNameLen: dashboard.MaxNameLen,
+		Widgets:      layout.Widgets,
+		Panel:        layout.Panel,
+		Names:        layout.Names,
+		Descriptions: layout.Descriptions,
+		MaxDescLen:   dashboard.MaxDescLen,
+		Editable:     s.dash.Path() != "",
+		MaxWidgets:   dashboard.MaxWidgets,
+		MaxPanel:     dashboard.MaxPanel,
+		MaxNameLen:   dashboard.MaxNameLen,
 	}
 }
 
@@ -78,16 +88,17 @@ func (s *server) handleSaveDashboard(w http.ResponseWriter, r *http.Request) {
 	// document, and neither may silently undo the other. The page therefore sends
 	// only the list it changed, and clearing is still expressible: send [].
 	var req struct {
-		Widgets *[]dashboard.Widget `json:"widgets"`
-		Panel   *[]string           `json:"panel"`
-		Names   *map[string]string  `json:"names"`
+		Widgets      *[]dashboard.Widget `json:"widgets"`
+		Panel        *[]string           `json:"panel"`
+		Names        *map[string]string  `json:"names"`
+		Descriptions *map[string]string  `json:"descriptions"`
 	}
 	if err := dec.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "некорректный JSON: "+err.Error())
 		return
 	}
-	if req.Widgets == nil && req.Panel == nil && req.Names == nil {
-		writeError(w, http.StatusBadRequest, "нечего сохранять: нужен widgets, panel или names")
+	if req.Widgets == nil && req.Panel == nil && req.Names == nil && req.Descriptions == nil {
+		writeError(w, http.StatusBadRequest, "нечего сохранять: нужен widgets, panel, names или descriptions")
 		return
 	}
 	// Update, not Current-then-Save: the two lists are edited from different
@@ -99,6 +110,10 @@ func (s *server) handleSaveDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.Panel != nil {
 			layout.Panel = *req.Panel
+		}
+		if req.Descriptions != nil {
+			// The whole map, like names: an empty value removes the note.
+			layout.Descriptions = *req.Descriptions
 		}
 		if req.Names != nil {
 			// The whole map, not a merge: removing a name is how the cloud's name

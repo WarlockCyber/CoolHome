@@ -1133,6 +1133,12 @@ footer {
 
 .rename-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
+.rename-desc { display: flex; flex-direction: column; gap: 0.35rem; margin-top: 0.35rem; }
+
+/* A textarea, not an input: a note about what a scene does is a sentence or
+   three, and one line hides most of it. */
+.rename-textarea { resize: vertical; min-height: 4.5rem; line-height: 1.45; }
+
 .rename-hint {
   font-size: 0.78rem;
   line-height: 1.4;
@@ -1498,6 +1504,32 @@ footer {
 }
 
 .card--scene { gap: 0.75rem; min-height: 8rem; }
+
+/* The note says what the scene touches, which its name does not. It sits under
+   the button: read it, then press. */
+.card--scene .scene-note {
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--muted);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* A quiet link, not a button: writing a note is occasional, and a full-width
+   button under every scene would read as a second action. */
+.scene-note-edit {
+  align-self: flex-start;
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.scene-note-edit:hover { border-color: var(--border-strong); color: var(--text); }
 
 .card--scene .press {
   min-height: 3.6rem;

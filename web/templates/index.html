@@ -153,10 +153,19 @@
         <button type="button" class="ghost sheet-close" data-rename="cancel" aria-label="Закрыть">✕</button>
       </div>
       <div class="rename-body">
-        <label class="rename-label" for="rename-input">Как называть это устройство здесь</label>
+        <label class="rename-label" for="rename-input" id="rename-name-label">Как называть это устройство здесь</label>
         <input id="rename-input" class="rename-input" type="text" maxlength="60"
                autocomplete="off" spellcheck="false" aria-describedby="rename-hint">
         <p id="rename-hint" class="rename-hint"></p>
+        <!-- Описание есть только у сценариев: имя говорит, как сцена
+             называется, но не что она делает. Поле локальное, как и имя. -->
+        <div id="rename-desc-wrap" class="rename-desc" hidden>
+          <label class="rename-label" for="rename-desc-input">Что делает</label>
+          <textarea id="rename-desc-input" class="rename-input rename-textarea" rows="3"
+                    maxlength="280" spellcheck="true"
+                    placeholder="Например: выключает свет в зале, на кухне и в коридоре"></textarea>
+          <p id="rename-desc-hint" class="rename-hint">Описание хранится только здесь, в облаке его нет.</p>
+        </div>
       </div>
       <div class="rename-actions">
         <button type="button" class="ghost ghost--danger" data-rename="reset" id="rename-reset">

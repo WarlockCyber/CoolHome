@@ -141,3 +141,26 @@ test('cut never splits a surrogate pair', () => {
   assert.equal(names.runeLength(out), 60);
   assert.ok(!out.includes('\uFFFD'));
 });
+
+test('a description keeps its lines and loses stray blanks', () => {
+  // A scene that touches the hall and the kitchen reads better on two lines than
+  // as one run-on sentence; a paste with blank lines must not become a tall card.
+  const out = names.normalizeNote('  Выключает свет в зале  \n\n   и на кухне\n');
+  assert.strictEqual(out, 'Выключает свет в зале\nи на кухне');
+});
+
+test('a description is bounded and never splits a surrogate pair', () => {
+  assert.strictEqual(names.DESC_MAX, 280);
+  const long = 'я'.repeat(400);
+  assert.strictEqual(names.normalizeNote(long).length, names.DESC_MAX);
+  const withEmoji = 'я'.repeat(279) + '😀' + 'я';
+  const out = names.normalizeNote(withEmoji);
+  assert.ok(names.runeLength(out) <= names.DESC_MAX);
+  assert.ok(!out.includes('\uFFFD'));
+});
+
+test('an empty description is empty, not whitespace', () => {
+  assert.strictEqual(names.normalizeNote(''), '');
+  assert.strictEqual(names.normalizeNote('   \n  \n '), '');
+  assert.strictEqual(names.normalizeNote(null), '');
+});

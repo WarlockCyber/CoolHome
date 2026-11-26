@@ -4,11 +4,14 @@
 // device card. On a wall tablet that is what a remote is: six buttons of the
 // size the user chose, not six card-shaped blocks.
 //
-// The same file also holds the side panel: the devices whose full cards sit in
-// the right-hand column, beside the remote. It is a separate list because it
-// answers a different question — the remote is what you reach for, the panel is
-// what you want to see at a glance — and because a device card carries every
-// control of the device, while a widget carries one.
+// The same file also holds what is local about a device and invisible to the
+// cloud: a side panel of cards, names, and short descriptions.
+//
+// The side panel holds the devices whose full cards sit in the column beside the
+// remote. It is a separate list because it answers a different question — the
+// remote is what you reach for, the panel is what you want to see at a glance —
+// and because a device card carries every control of the device, while a widget
+// carries one.
 //
 // The selection lives on the server, not in the browser. A tablet on a wall
 // gets its cache cleared, its browser reinstalled, or the hardware replaced;
@@ -74,7 +77,17 @@ type Layout struct {
 	// Keyed by device id, which is the only identifier that survives a rename
 	// in the app: the cloud's name is what the user is changing.
 	Names map[string]string `json:"names,omitempty"`
+	// Descriptions is a short note about a device, keyed by device id. It exists
+	// because a scene's name says what it is called, not what it does: "веранда
+	// включить" tells nothing about which lamps it touches. The note is local,
+	// like the name, and the cloud is never told about it.
+	Descriptions map[string]string `json:"descriptions,omitempty"`
 }
+
+// MaxDescLen bounds a description. It is longer than a name because it is a
+// sentence about what something does, not a heading — and still short enough to
+// sit under a card without turning it into a page.
+const MaxDescLen = 280
 
 // MaxNameLen bounds a local name. It is the same bound the remote's widget
 // titles use: a card heading, not a description.
@@ -136,9 +149,10 @@ func (s *Store) Current() (Layout, error) {
 // currentLocked copies the in-memory layout. Callers hold the lock.
 func (s *Store) currentLocked() Layout {
 	return Layout{
-		Widgets: append([]Widget(nil), s.layout.Widgets...),
-		Panel:   append([]string(nil), s.layout.Panel...),
-		Names:   copyNames(s.layout.Names),
+		Widgets:      append([]Widget(nil), s.layout.Widgets...),
+		Panel:        append([]string(nil), s.layout.Panel...),
+		Names:        copyNames(s.layout.Names),
+		Descriptions: copyNames(s.layout.Descriptions),
 	}
 }
 
@@ -163,6 +177,16 @@ func (s *Store) Names() (map[string]string, error) {
 		return nil, err
 	}
 	return layout.Names, nil
+}
+
+// Descriptions returns the local notes, keyed by device id. Copied for the same
+// reason as Names: the caller must not be able to edit the store's map.
+func (s *Store) Descriptions() (map[string]string, error) {
+	layout, err := s.Current()
+	if err != nil {
+		return nil, err
+	}
+	return layout.Descriptions, nil
 }
 
 // Update reads the layout, lets `edit` change it, and stores the result — all
@@ -352,7 +376,41 @@ func Normalize(layout Layout) (Layout, error) {
 	if err != nil {
 		return Layout{}, err
 	}
-	return Layout{Widgets: out, Panel: panelOut, Names: names}, nil
+	descriptions, err := NormalizeDescriptions(layout.Descriptions)
+	if err != nil {
+		return Layout{}, err
+	}
+	return Layout{Widgets: out, Panel: panelOut, Names: names, Descriptions: descriptions}, nil
+}
+
+// NormalizeDescriptions validates local notes: trimmed, bounded, and an empty
+// note dropped — clearing the field is how "no description" is said.
+func NormalizeDescriptions(in map[string]string) (map[string]string, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(in))
+	for id, text := range in {
+		id = strings.TrimSpace(id)
+		text = strings.TrimSpace(text)
+		if id == "" {
+			return nil, fmt.Errorf("%w: a description has no device_id", ErrInvalid)
+		}
+		if len(id) > 64 {
+			return nil, fmt.Errorf("%w: device id %q is longer than 64 characters", ErrInvalid, id)
+		}
+		if text == "" {
+			continue
+		}
+		if utf8.RuneCountInString(text) > MaxDescLen {
+			return nil, fmt.Errorf("%w: the description for %s is longer than %d characters", ErrInvalid, id, MaxDescLen)
+		}
+		out[id] = text
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
 }
 
 // NormalizeNames validates local device names: a trimmed name of a bounded

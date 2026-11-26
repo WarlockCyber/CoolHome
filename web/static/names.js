@@ -18,6 +18,10 @@
   // description.
   var MAX = 60;
 
+  // DESC_MAX matches dashboard.MaxDescLen: a sentence about what something does,
+  // long enough to name the devices, short enough to sit under a card.
+  var DESC_MAX = 280;
+
   // runeLength counts what the server counts: code points, not UTF-16 units.
   // The two differ for anything outside the basic plane (an emoji is one rune
   // and two units), and a bound checked in the wrong unit lets the page send
@@ -61,6 +65,21 @@
     var text = String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim();
     if (!text) return '';
     return cut(text, MAX).trim();
+  }
+
+  // normalizeNote cleans a description. Line breaks are kept — a scene that
+  // touches the hall and the kitchen reads better on two lines than in one run-on
+  // sentence — but each line is trimmed and empty lines are dropped, so a paste
+  // with stray blank lines does not become a tall card.
+  function normalizeNote(raw) {
+    var text = String(raw == null ? '' : raw).replace(/\r\n?/g, '\n');
+    var lines = [];
+    var parts = text.split('\n');
+    for (var i = 0; i < parts.length; i++) {
+      var line = parts[i].replace(/[ \t]+/g, ' ').trim();
+      if (line) lines.push(line);
+    }
+    return cut(lines.join('\n'), DESC_MAX).trim();
   }
 
   // separator is what joins a device name and a control name in a widget title
@@ -109,6 +128,8 @@
 
   var api = {
     MAX: MAX,
+    DESC_MAX: DESC_MAX,
+    normalizeNote: normalizeNote,
     SEPARATOR: SEPARATOR,
     normalize: normalize,
     renamedTitles: renamedTitles,

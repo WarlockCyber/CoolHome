@@ -223,6 +223,10 @@
     // renames anything.
     names: {},
     maxNameLen: 60,
+    // descriptions are local notes about what a device does, keyed by device id.
+    // For a scene the name says what it is called, not which lamps it touches.
+    descriptions: {},
+    maxDescLen: 280,
     editMode: false,
     // draft is the working copy while editing; null when not editing.
     draft: null,
@@ -267,6 +271,8 @@
     renameHint: document.getElementById('rename-hint'),
     renameReset: document.getElementById('rename-reset'),
     renameTitle: document.getElementById('rename-title'),
+    renameDescWrap: document.getElementById('rename-desc-wrap'),
+    renameDescInput: document.getElementById('rename-desc-input'),
     problem: document.getElementById('problem'),
     problemTitle: document.getElementById('problem-title'),
     problemMessage: document.getElementById('problem-message'),
@@ -346,6 +352,10 @@
       // is an installation that has renamed nothing, not a failure.
       if (board && board.names && typeof board.names === 'object') state.names = board.names;
       if (board && Number(board.max_name_len) > 0) state.maxNameLen = Number(board.max_name_len);
+      if (board && board.descriptions && typeof board.descriptions === 'object') {
+        state.descriptions = board.descriptions;
+      }
+      if (board && Number(board.max_desc_len) > 0) state.maxDescLen = Number(board.max_desc_len);
       state.lastSync = data.last_sync || null;
       state.error = data.error || '';
       // A reload mid-edit would throw away an unsaved layout, so it waits for
@@ -1352,17 +1362,49 @@
         '</div>' +
         (sensor
           ? sensorBody(device, tempPoint, values)
-          : powerOnly
-            ? powerBody(device, powerCodes, values)
-            : (controls ? '<div class="controls">' + controls + '</div>' : '') +
-              (readings ? '<div class="readings">' + readings + '</div>' : '') +
-              // Every card leads somewhere: the settings modal is also where a
-              // device is renamed, and a device whose controls all fit on the
-              // card would otherwise have no way in at all.
-              '<button type="button" class="widget-more" data-more="' + esc(device.id) + '"' +
-                ' data-code="" aria-haspopup="dialog">Настройки</button>') +
+          : isScene(device)
+            // A scene has one button and nothing to configure. A "Настройки" link
+            // here opened a panel whose only control was a copy of that button —
+            // a dead end that read as a broken card. What a scene needs instead
+            // is a note saying what it actually does.
+            ? sceneBody(device, controls)
+            : powerOnly
+              ? powerBody(device, powerCodes, values)
+              : (controls ? '<div class="controls">' + controls + '</div>' : '') +
+                (readings ? '<div class="readings">' + readings + '</div>' : '') +
+                // Every card leads somewhere: the settings modal is also where a
+                // device is renamed, and a device whose controls all fit on the
+                // card would otherwise have no way in at all.
+                '<button type="button" class="widget-more" data-more="' + esc(device.id) + '"' +
+                  ' data-code="" aria-haspopup="dialog">Настройки</button>') +
         note +
       '</article>'
+    );
+  }
+
+  // descriptionOf returns the local note for a device, or ''.
+  function descriptionOf(deviceID) {
+    return state.descriptions[deviceID] || '';
+  }
+
+  // sceneBody is the button, the note about what the scene does, and the way to
+  // edit that note. A scene has no settings: its one control is already here, and
+  // a panel repeating it was a dead end.
+  function sceneBody(device, controls) {
+    const note = descriptionOf(device.id);
+    // Line breaks are meaningful: a scene touching three rooms reads better as a
+    // list than as one run-on line. The text is escaped first, then its newlines
+    // become breaks — order matters, or the escaping would be defeated.
+    const noteHTML = note
+      ? '<p class="scene-note">' + esc(note).replace(/\n/g, '<br>') + '</p>'
+      : '';
+    return (
+      (controls ? '<div class="controls">' + controls + '</div>' : '') +
+      noteHTML +
+      '<button type="button" class="scene-note-edit" data-scene-note="' + esc(device.id) + '"' +
+        ' aria-label="' + esc((device.name || device.id) + ': что делает сцена') + '">' +
+        (note ? '✎ Описание' : '＋ Описание') +
+      '</button>'
     );
   }
 
@@ -2286,9 +2328,29 @@
     els.renameInput.value = own;
     els.renameInput.maxLength = state.maxNameLen;
     els.renameInput.placeholder = device.name || deviceID;
-    els.renameHint.textContent =
-      'Так устройство называется только здесь. В облаке и в приложении Tuya имя не меняется.';
+    els.renameHint.textContent = isScene(device)
+      ? 'Так сценарий называется только здесь. В облаке и в приложении Tuya имя не меняется.'
+      : 'Так устройство называется только здесь. В облаке и в приложении Tuya имя не меняется.';
     els.renameReset.hidden = own === '';
+    // A scene has nothing to configure but says nothing about what it does, so
+    // the same dialog carries its note. For a device the field stays out of the
+    // way: a lamp's name is enough.
+    const scene = isScene(device);
+    els.renameDescWrap.hidden = !scene;
+    // The wording follows the thing: a scene is not a device, and telling
+    // somebody "так устройство называется только здесь" about a scene reads as a
+    // copy-paste mistake.
+    const nameLabel = document.getElementById('rename-name-label');
+    if (nameLabel) {
+      nameLabel.textContent = scene
+        ? 'Как называть этот сценарий здесь'
+        : 'Как называть это устройство здесь';
+    }
+    if (scene) {
+      els.renameDescInput.value = descriptionOf(deviceID);
+      els.renameDescInput.maxLength = state.maxDescLen;
+      els.renameTitle.textContent = 'Сценарий: ' + (own || device.name || deviceID);
+    }
     // The settings modal is where this was opened from; leaving it open under
     // the dialog would put two overlays on top of each other. closeSheet, not
     // close(): it forgets the state too, so the next render cannot reopen it.
@@ -2307,12 +2369,15 @@
     // Focus goes back to something on the page. Without this it lands on
     // <body>, because the element that opened the dialog (the settings modal)
     // was closed in the meantime — a keyboard user then has to Tab from the top.
-    const card = deviceID
-      ? Array.from(document.querySelectorAll('[data-more]')).find(
-          (el) => el.dataset.more === deviceID && el.closest('#side, #devices'),
-        )
+    // Back to the control that opened it: the settings button on a card, or the
+    // note button on a scene.
+    const opener = deviceID
+      ? Array.from(document.querySelectorAll('[data-more], [data-scene-note]')).find((el) => {
+          const id = el.dataset.more || el.dataset.sceneNote;
+          return id === deviceID;
+        })
       : null;
-    if (card) card.focus({ preventScroll: true });
+    if (opener) opener.focus({ preventScroll: true });
   }
 
   // saveRename stores the name, then reloads: the server applies names when it
@@ -2321,49 +2386,66 @@
   async function saveRename(text) {
     const deviceID = renaming;
     if (!deviceID) return;
+    const device = state.devices.find((d) => d.id === deviceID);
+    const scene = Boolean(device) && isScene(device);
+
     const previous = localName(deviceID);
     const cloud = cloudName(deviceID);
     // Typing the cloud's name back is the same as removing the local one: an
     // override that changes nothing would only make the dialog claim the device
     // is renamed when it is not.
     const next = localNames.normalize(text) === cloud ? '' : localNames.normalize(text);
-    if (next === previous) {
+    const prevNote = descriptionOf(deviceID);
+    const nextNote = scene ? localNames.normalizeNote(els.renameDescInput.value) : prevNote;
+    if (next === previous && nextNote === prevNote) {
       closeRename();
       return;
     }
     if (!state.layoutEditable) {
       // Same rule as the layout: say the change will not survive a restart
       // rather than report a success that a restart undoes.
-      state.error = 'Название хранится только в памяти: задайте COOLHOME_DASHBOARD_FILE.';
+      state.error = 'Название и описание хранятся только в памяти: задайте COOLHOME_DASHBOARD_FILE.';
     }
-    const names = Object.assign({}, state.names);
-    if (next) names[deviceID] = next;
-    else delete names[deviceID];
 
-    // A widget's title is frozen when it is added, so a rename would leave the
-    // remote showing the old name beside a card showing the new one.
-    const oldTitle = previous || cloud;
-    const renamed = localNames.renamedTitles(state.layout, deviceID, oldTitle, next || cloud);
-    const layoutChanged = renamed.some((w, i) => w !== state.layout[i]);
+    // The name and its note are one edit of one thing, so they travel in one
+    // request: split into two, a failure on the second would leave the card with
+    // a new name and an old note.
+    const body = {};
+    if (next !== previous) {
+      const names = Object.assign({}, state.names);
+      if (next) names[deviceID] = next;
+      else delete names[deviceID];
+      state.names = names;
+      body.names = names;
 
-    state.names = names;
-    if (layoutChanged) state.layout = renamed;
+      // A widget's title is frozen when it is added, so a rename would leave the
+      // remote showing the old name beside a card showing the new one.
+      const oldTitle = previous || cloud;
+      const renamed = localNames.renamedTitles(state.layout, deviceID, oldTitle, next || cloud);
+      if (renamed.some((w, i) => w !== state.layout[i])) {
+        state.layout = renamed;
+        body.widgets = state.layout;
+      }
+    }
+    if (nextNote !== prevNote) {
+      const descriptions = Object.assign({}, state.descriptions);
+      if (nextNote) descriptions[deviceID] = nextNote;
+      else delete descriptions[deviceID];
+      state.descriptions = descriptions;
+      body.descriptions = descriptions;
+    }
+
     closeRename();
     render();
 
     try {
-      // One request, not two: the name and the widget titles that follow it are
-      // one change, and a failure between two writes would leave the remote
-      // showing the old title beside a card showing the new name.
-      const body = { names: names };
-      if (layoutChanged) body.widgets = state.layout;
       await request('/api/dashboard', {
         method: 'PUT',
         body: JSON.stringify(body),
       });
       state.error = '';
     } catch (err) {
-      state.error = 'Не удалось сохранить название: ' + err.message;
+      state.error = 'Не удалось сохранить: ' + err.message;
     }
     await load({ silent: true });
   }
@@ -2559,6 +2641,14 @@
   // there is none to show.
   els.scenes.addEventListener('click', (event) => {
     if (!(event.target instanceof Element)) return;
+    // The note button sits on the same card as the press button, so it is
+    // checked first: pressing would otherwise run the scene when the person
+    // meant to write about it.
+    const note = event.target.closest('[data-scene-note]');
+    if (note) {
+      openRename(note.dataset.sceneNote);
+      return;
+    }
     const button = event.target.closest('button[data-action="press"]');
     if (!button) return;
     send(button.dataset.id, { code: button.dataset.code, value: true });
@@ -2568,6 +2658,9 @@
   // devices, and a scene has no settings.
   els.scenes.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter' && event.key !== ' ') return;
+    // A focused button already handles Enter and Space itself. Without this,
+    // Enter on "Описание" would run the scene as well as open the note.
+    if (event.target instanceof Element && event.target.closest('button, a, input, textarea')) return;
     const card = event.target instanceof Element ? event.target.closest('.card--scene') : null;
     if (!card) return;
     event.preventDefault();

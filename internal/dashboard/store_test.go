@@ -537,3 +537,128 @@ func TestFailedUpdateKeepsTheOldLayout(t *testing.T) {
 		t.Errorf("layout was damaged by a rejected update: %+v", after)
 	}
 }
+
+// A description is what a scene's name cannot say: which devices it touches.
+// Like a name it is local, bounded, trimmed, and cleared by emptying the field.
+func TestDescriptionsAreStoredAndCleared(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "d.json")
+	s := New(path)
+	if _, err := s.Save(Layout{Descriptions: map[string]string{
+		" scene-1 ": "  Выключает свет в зале и на кухне  ",
+		"scene-2":   "Открывает шторы",
+	}}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	reloaded, err := New(path).Descriptions()
+	if err != nil {
+		t.Fatalf("Descriptions: %v", err)
+	}
+	if reloaded["scene-1"] != "Выключает свет в зале и на кухне" {
+		t.Fatalf("description = %q, want it trimmed", reloaded["scene-1"])
+	}
+	if reloaded["scene-2"] != "Открывает шторы" {
+		t.Errorf("second description lost: %v", reloaded)
+	}
+
+	// An empty description removes the entry rather than storing a blank.
+	if _, err := s.Save(Layout{Descriptions: map[string]string{"scene-1": "  "}}); err != nil {
+		t.Fatalf("Save with empty: %v", err)
+	}
+	after, err := s.Descriptions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != 0 {
+		t.Errorf("descriptions = %v, want none", after)
+	}
+}
+
+func TestDescriptionsRejectBadInput(t *testing.T) {
+	cases := map[string]map[string]string{
+		"empty id":    {"  ": "текст"},
+		"id too long": {strings.Repeat("x", 65): "текст"},
+		"too long":    {"d1": strings.Repeat("я", MaxDescLen+1)},
+	}
+	for name, in := range cases {
+		if _, err := NormalizeDescriptions(in); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: err = %v, want ErrInvalid", name, err)
+		}
+	}
+	// Exactly at the bound is accepted, counted in runes like a name.
+	if _, err := NormalizeDescriptions(map[string]string{"d1": strings.Repeat("я", MaxDescLen)}); err != nil {
+		t.Errorf("a description of exactly %d Cyrillic characters was refused: %v", MaxDescLen, err)
+	}
+}
+
+// A description must not be able to change through the map the store returned.
+func TestDescriptionsAreCopiedOnRead(t *testing.T) {
+	s := New("")
+	if _, err := s.Save(Layout{Descriptions: map[string]string{"d1": "было"}}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.Descriptions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	first["d1"] = "подменено"
+	first["d2"] = "лишнее"
+
+	second, _ := s.Descriptions()
+	if second["d1"] != "было" {
+		t.Errorf("the store changed through the returned map: %v", second)
+	}
+	if _, ok := second["d2"]; ok {
+		t.Error("the store gained an entry from the returned map")
+	}
+}
+
+// Saving a description must leave the layout and the names alone: they are
+// edited from different places but share one document.
+func TestSavingDescriptionKeepsTheRest(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "d.json")
+	s := New(path)
+	if _, err := s.Save(Layout{
+		Widgets: []Widget{{DeviceID: "d1", Code: "c1"}},
+		Panel:   []string{"p1"},
+		Names:   map[string]string{"d1": "Кухня"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Save(Layout{
+		Widgets:      []Widget{{DeviceID: "d1", Code: "c1"}},
+		Panel:        []string{"p1"},
+		Names:        map[string]string{"d1": "Кухня"},
+		Descriptions: map[string]string{"d1": "что-то"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	layout, err := New(path).Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(layout.Widgets) != 1 || len(layout.Panel) != 1 || layout.Names["d1"] != "Кухня" {
+		t.Errorf("the rest was lost: %+v", layout)
+	}
+	if layout.Descriptions["d1"] != "что-то" {
+		t.Errorf("description = %v", layout.Descriptions)
+	}
+}
+
+// An old file has no descriptions key at all.
+func TestFileWithoutDescriptionsLoads(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "d.json")
+	if err := os.WriteFile(path, []byte(`{"widgets":[{"device_id":"d1","code":"c1"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	layout, err := New(path).Current()
+	if err != nil {
+		t.Fatalf("Current: %v", err)
+	}
+	if layout.Descriptions != nil {
+		t.Errorf("descriptions = %v, want none", layout.Descriptions)
+	}
+	if len(layout.Widgets) != 1 {
+		t.Errorf("widgets lost: %+v", layout.Widgets)
+	}
+}

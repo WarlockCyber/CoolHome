@@ -386,3 +386,76 @@ func TestSavingNamesLeavesLayoutAlone(t *testing.T) {
 		t.Errorf("names = %v", out.Names)
 	}
 }
+
+// A scene's description is local text about what the scene does. It travels
+// with the layout, and saving it must not disturb the remote, the panel or the
+// names.
+func TestDashboardSavesSceneDescription(t *testing.T) {
+	srv := newDashboardServer(t, filepath.Join(t.TempDir(), "d.json"))
+	if resp, raw := putJSON(t, srv.URL+"/api/dashboard",
+		`{"widgets":[{"device_id":"d1","code":"c1"}],"panel":["p1"],"names":{"d1":"Кухня"}}`); resp.StatusCode != http.StatusOK {
+		t.Fatalf("setup: %d %s", resp.StatusCode, raw)
+	}
+
+	resp, raw := putJSON(t, srv.URL+"/api/dashboard",
+		`{"descriptions":{"scene-1":"  Выключает свет в зале и на кухне  "}}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("descriptions: %d %s", resp.StatusCode, raw)
+	}
+	var out dashboardResponse
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Descriptions["scene-1"] != "Выключает свет в зале и на кухне" {
+		t.Errorf("description = %q, want it trimmed", out.Descriptions["scene-1"])
+	}
+	if out.MaxDescLen != 280 {
+		t.Errorf("max_desc_len = %d, want 280", out.MaxDescLen)
+	}
+	// The rest is untouched.
+	if len(out.Widgets) != 1 || len(out.Panel) != 1 || out.Names["d1"] != "Кухня" {
+		t.Errorf("saving a description disturbed the rest: %+v", out)
+	}
+
+	// Served back after a reread, which is what a reload does.
+	_, raw = getJSON(t, srv.URL+"/api/dashboard")
+	if !strings.Contains(string(raw), "Выключает свет") {
+		t.Errorf("the description was not served back: %s", raw)
+	}
+}
+
+func TestDashboardRejectsATooLongDescription(t *testing.T) {
+	srv := newDashboardServer(t, filepath.Join(t.TempDir(), "d.json"))
+	long := strings.Repeat("я", 281)
+	resp, raw := putJSON(t, srv.URL+"/api/dashboard",
+		`{"descriptions":{"scene-1":"`+long+`"}}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", resp.StatusCode, raw)
+	}
+	if !strings.Contains(string(raw), "280") {
+		t.Errorf("body = %s, want the limit named", raw)
+	}
+}
+
+// Clearing a description is an empty string, and it must not clear anything else.
+func TestDashboardClearsADescription(t *testing.T) {
+	srv := newDashboardServer(t, filepath.Join(t.TempDir(), "d.json"))
+	if resp, raw := putJSON(t, srv.URL+"/api/dashboard",
+		`{"names":{"d1":"Кухня"},"descriptions":{"scene-1":"было"}}`); resp.StatusCode != http.StatusOK {
+		t.Fatalf("setup: %d %s", resp.StatusCode, raw)
+	}
+	resp, raw := putJSON(t, srv.URL+"/api/dashboard", `{"descriptions":{}}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, raw)
+	}
+	var out dashboardResponse
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Descriptions) != 0 {
+		t.Errorf("descriptions = %v, want cleared", out.Descriptions)
+	}
+	if out.Names["d1"] != "Кухня" {
+		t.Errorf("clearing a description lost a name: %v", out.Names)
+	}
+}
