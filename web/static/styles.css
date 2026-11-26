@@ -157,6 +157,34 @@ main {
   min-width: 0;
 }
 
+/* ---------- battery ---------- */
+
+.battery-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The badge is read by a screen reader as "🔋 10 %", which is enough; its title
+   carries the sentence. */
+.battery-badge--middle {
+  color: #f6dfb0;
+  border: 1px solid rgba(240, 193, 106, 0.45);
+  background: rgba(240, 193, 106, 0.12);
+}
+
+.battery-badge--low {
+  color: #ffd9d5;
+  border: 1px solid rgba(244, 119, 111, 0.5);
+  background: var(--danger-dim);
+}
+
 /* ---------- side panel ---------- */
 
 .side-panel {
@@ -351,6 +379,30 @@ main {
   box-shadow: var(--shadow);
   transition: border-color 160ms ease, transform 160ms ease;
 }
+
+/* A card whose battery is going is marked at the edge, not flooded with colour:
+   on a wall it has to be visible from across the room without making the control
+   hard to read.
+
+   These rules live here, after `.card`, on purpose. They set box-shadow, and
+   `.card` sets `box-shadow: var(--shadow)` — at equal specificity the later rule
+   wins, so a battery rule placed earlier in the file was silently dropped and the
+   card had no stripe at all. The inset stripe is added to the card's own shadow
+   rather than replacing it, so the card keeps its depth. */
+.card--battery-middle {
+  border-color: rgba(240, 193, 106, 0.5);
+  box-shadow: inset 3px 0 0 #f0c16a, var(--shadow);
+}
+
+.card--battery-low {
+  border-color: rgba(244, 119, 111, 0.6);
+  box-shadow: inset 3px 0 0 var(--danger), var(--shadow);
+}
+
+/* `.card:hover` below resets the border to neutral; a card that says "replace the
+   battery" must keep saying it while the pointer is on it. */
+.card--battery-middle:hover { border-color: rgba(240, 193, 106, 0.75); }
+.card--battery-low:hover { border-color: rgba(244, 119, 111, 0.85); }
 
 .card:hover { border-color: var(--border-strong); }
 

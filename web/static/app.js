@@ -894,6 +894,9 @@
   // what stops a draft from being saved.
   const ruleHelp = window.CoolHomeRules;
 
+  // Which devices deserve a coloured card because their battery is going.
+  const battery = window.CoolHomeBattery;
+
   // temperatureUnit normalises Tuya's spellings to one symbol.
   function temperatureUnit(point) {
     const unit = String((point && point.unit) || '');
@@ -1399,10 +1402,22 @@
     const stateClass = device.online ? 'state--on' : 'state--off';
     const stateText = device.online ? 'онлайн' : 'не в сети';
 
+    // A battery that is running out is the kind of thing noticed only when the
+    // device stops answering. The card says it before that: a tinted border for
+    // "low" or "middle", and a small badge with the number.
+    const cellInfo = battery.deviceLevel(device);
+    const cell = battery.needsAttention(cellInfo) ? cellInfo : null;
+    const batteryClass = cell ? ' card--battery-' + cell.level : '';
+    const batteryBadge = cell
+      ? '<span class="battery-badge battery-badge--' + esc(cell.level) + '" title="' +
+          esc(battery.describe(cell)) + '">🔋 ' + esc(battery.label(cell)) + '</span>'
+      : '';
+
     return (
       '<article class="card' + (sensor ? ' card--sensor' : '') +
         (powerOnly ? ' card--power' : '') +
         (isScene(device) ? ' card--scene' : '') +
+        batteryClass +
         (cardOpts.hidden ? ' card--hidden' : '') +
         (device.online ? '' : ' card--offline') + '">' +
         '<div class="card-head">' +
@@ -1412,6 +1427,7 @@
           '</div>' +
           '<span class="state ' + stateClass + '"><span class="dot"></span>' + stateText + '</span>' +
           (cardOpts.hidden ? '<span class="hidden-badge">скрыт</span>' : '') +
+          batteryBadge +
         '</div>' +
         (sensor
           ? sensorBody(device, tempPoint, values)
