@@ -278,6 +278,9 @@
     scenesFromCloud: null,
     // sceneDraft is the scene being created or edited, or null.
     sceneDraft: null,
+    // pickOpen names the open picker in the scene editor ("device:0"), or ''.
+    // The list belongs to the page, so this state is the whole truth about it.
+    pickOpen: '',
     // showHidden reveals the hidden cards for review. Not stored: a wall tablet
     // that always showed them would defeat the hiding.
     showHidden: false,
@@ -2269,6 +2272,7 @@
       return;
     }
     state.sceneDraft = sceneDraftFrom(view);
+    state.pickOpen = '';
     els.sceneTitle.textContent = sceneID ? 'Изменить сценарий' : 'Новый сценарий';
     els.sceneErrors.hidden = true;
     renderSceneEditor();
@@ -2279,6 +2283,7 @@
 
   function closeSceneEditor() {
     state.sceneDraft = null;
+    state.pickOpen = '';
     if (els.sceneEditor.open) els.sceneEditor.close();
   }
 
@@ -2317,35 +2322,97 @@
         'приложении и здесь. Удалить сцену через API нельзя — её можно скрыть.</p>';
   }
 
-  // sceneRow builds one action row. Its own function, because a device change
-  // updates only part of one row: rebuilding the whole editor under a finger
-  // takes the focus off the control that was just used, and — the report from a
-  // wall tablet — can put the choice back to "— устройство —".
+  // sceneRow builds one action row.
+  //
+  // The device and function pickers are the page's own, not <select>: a native
+  // popup belongs to the browser window, and on a wall tablet it closed under
+  // the finger — the chosen device came back as "— устройство —" the moment the
+  // mouse was released, and a click from the popup's closing could land on a
+  // button underneath. A list inside the dialog cannot do either: it is opened,
+  // read and closed by this code alone.
   function sceneRow(a, i) {
+    return '<div class="rule-row" data-scene-action="' + i + '">' + sceneRowInner(a, i) + '</div>';
+  }
+
+  function sceneRowInner(a, i) {
     return (
-      '<div class="rule-row" data-scene-action="' + i + '">' +
-        '<select data-scene-device="' + i + '" aria-label="Устройство действия ' + (i + 1) + '">' +
-          deviceOptions(a.device, '— устройство —') +
-        '</select>' +
-        '<select data-scene-code="' + i + '" aria-label="Функция действия ' + (i + 1) + '">' +
-          pointOptions(a.device, a.code) +
-        '</select>' +
-        '<input data-scene-value="' + i + '" type="text" value="' + esc(a.value) + '"' +
-          ' placeholder="значение" aria-label="Значение действия ' + (i + 1) + '">' +
-        '<button type="button" class="ghost ghost--danger rule-row-x" data-scene-remove="' + i + '"' +
-          ' aria-label="Убрать действие ' + (i + 1) + '">✕</button>' +
+      pickBlock('device', i, a.device, deviceChoices(), '— устройство —') +
+      pickBlock('code', i, a.code, pointChoices(a.device), '— функция —') +
+      '<input data-scene-value="' + i + '" type="text" value="' + esc(a.value) + '"' +
+        ' placeholder="значение" aria-label="Значение действия ' + (i + 1) + '">' +
+      '<button type="button" class="ghost ghost--danger rule-row-x" data-scene-remove="' + i + '"' +
+        ' aria-label="Убрать действие ' + (i + 1) + '">✕</button>'
+    );
+  }
+
+  // pickBlock is one picker: a button showing the choice, and the list under it.
+  // The list is only drawn when open, so a row costs nothing while it is idle.
+  function pickBlock(kind, i, value, options, placeholder) {
+    const open = state.pickOpen === kind + ':' + i;
+    const chosen = options.find((o) => o.value === value);
+    // A stored choice whose device has left the home shows its id rather than
+    // the placeholder: the row would otherwise claim nothing is chosen while
+    // the action is still there, and a save would keep something invisible.
+    const label = chosen ? chosen.label : value || placeholder;
+    const list = options
+      .map(
+        (o) =>
+          '<button type="button" role="option" class="pick-opt' +
+            (o.value === value ? ' pick-opt--on' : '') + '"' +
+            ' aria-selected="' + (o.value === value ? 'true' : 'false') + '"' +
+            ' data-pick-val="' + esc(o.value) + '" data-pick-kind="' + kind + '"' +
+            ' data-pick-row="' + i + '">' + esc(o.label) + '</button>',
+      )
+      .join('');
+    return (
+      '<div class="pick">' +
+        '<button type="button" class="pick-btn" data-pick-btn="' + kind + ':' + i + '"' +
+          ' aria-haspopup="listbox" aria-expanded="' + (open ? 'true' : 'false') + '"' +
+          ' aria-label="' + esc(kind === 'device' ? 'Устройство' : 'Функция') + ' действия ' + (i + 1) + '">' +
+          '<span class="pick-label">' + esc(label) + '</span>' +
+          '<span class="pick-caret" aria-hidden="true">▾</span>' +
+        '</button>' +
+        (open
+          ? '<div class="pick-list" role="listbox" data-pick-list="' + kind + ':' + i + '">' + list + '</div>'
+          : '') +
       '</div>'
     );
   }
 
-  // renderSceneCode refreshes the function list of one row after its device
-  // changed. Only the list depends on the device, so only the list is rebuilt:
-  // the select the person is using stays where it is, with its value and focus.
-  function renderSceneCode(i) {
+  // deviceChoices and pointChoices are the picker's data. The first entry is the
+  // empty one: an action row starts with nothing chosen, and a person must be
+  // able to take a choice back.
+  function deviceChoices() {
+    const out = [{ value: '', label: '— устройство —' }];
+    for (const d of state.devices.filter((x) => !isScene(x))) {
+      out.push({ value: d.id, label: d.name || d.id });
+    }
+    return out;
+  }
+
+  function pointChoices(deviceID) {
+    const out = [{ value: '', label: '— функция —' }];
+    for (const p of selectablePoints(deviceID)) {
+      out.push({ value: p.code, label: p.label });
+    }
+    return out;
+  }
+
+  // renderSceneRow redraws one row from the draft, and puts the focus back where
+  // the person was. Everything in a row is this page's own markup, so a redraw
+  // cannot be dismissed by the browser the way a native popup was.
+  function renderSceneRow(i, focus) {
     const d = state.sceneDraft;
     if (!d || !d.actions[i]) return;
-    const code = els.sceneBody.querySelector('[data-scene-code="' + i + '"]');
-    if (code) code.innerHTML = pointOptions(d.actions[i].device, d.actions[i].code);
+    const row = els.sceneBody.querySelector('[data-scene-action="' + i + '"]');
+    if (!row) return;
+    row.innerHTML = sceneRowInner(d.actions[i], i);
+    if (focus) {
+      const next = els.sceneBody.querySelector('[data-pick-btn="' + focus + ':' + i + '"]');
+      // Focus, not click: opening the next list on its own would take the
+      // decision away from the person.
+      if (next) next.focus();
+    }
     renderSceneHint();
   }
 
@@ -2385,20 +2452,17 @@
     return '';
   }
 
+  // readSceneForm takes what is typed. The device and the function are not read
+  // back from the page: the draft is where a choice lives, and reading it back
+  // out of the DOM is what made a repaint able to undo a choice.
   function readSceneForm() {
     const d = state.sceneDraft;
     if (!d) return;
     const name = document.getElementById('scene-name');
     if (name) d.name = name.value;
     d.actions = d.actions.map((a, i) => {
-      const dev = els.sceneBody.querySelector('[data-scene-device="' + i + '"]');
-      const code = els.sceneBody.querySelector('[data-scene-code="' + i + '"]');
       const val = els.sceneBody.querySelector('[data-scene-value="' + i + '"]');
-      return {
-        device: dev ? dev.value : a.device,
-        code: code ? code.value : a.code,
-        value: val ? val.value : a.value,
-      };
+      return { device: a.device, code: a.code, value: val ? val.value : a.value };
     });
   }
 
@@ -3546,60 +3610,104 @@
     saveScene();
   });
 
+  // A list inside the dialog is closed by the same code that opened it: the
+  // page owns the popup now, so there is no browser window to dismiss it, and
+  // no release that arrives as a click somewhere else.
+  function closePick(refocus) {
+    const key = state.pickOpen;
+    if (!key) return;
+    state.pickOpen = '';
+    renderSceneRows();
+    if (!refocus) return;
+    const btn = els.sceneBody.querySelector('[data-pick-btn="' + key + '"]');
+    if (btn) btn.focus();
+  }
+
+  // renderSceneRows redraws the rows that own an open list, and nothing else.
+  function renderSceneRows() {
+    const d = state.sceneDraft;
+    if (!d) return;
+    const rows = els.sceneBody.querySelectorAll('[data-scene-action]');
+    for (let i = 0; i < rows.length; i++) renderSceneRow(i);
+  }
+
   const sceneBackdrop = backdropTracker(els.sceneEditor);
   els.sceneEditor.addEventListener('click', (event) => {
     if (!(event.target instanceof Element)) return;
     if (event.target.closest('[data-scene-close]') || sceneBackdrop(event)) {
       closeSceneEditor();
+      return;
     }
+    // A click anywhere else in the dialog closes an open list: that is what the
+    // list being "open" means.
+    if (state.pickOpen && !event.target.closest('.pick')) closePick(false);
   });
 
   els.sceneEditor.addEventListener('close', () => {
     state.sceneDraft = null;
+    state.pickOpen = '';
   });
 
   // Typing updates the draft without a repaint: a repaint on every keystroke
   // would take the caret out of the field being typed into.
   els.sceneBody.addEventListener('input', () => readSceneForm());
 
-  // A different device offers different functions, so the row has to follow.
-  //
-  // It follows in place, and the choice is taken from the control that fired.
-  // Rebuilding the whole editor here is what broke the choice on a wall tablet:
-  // the repaint read the draft in the same tick the value was set, and the row
-  // came back as "— устройство —" the moment the mouse was released.
-  els.sceneBody.addEventListener('change', (event) => {
-    if (!(event.target instanceof Element)) return;
-    const deviceSelect = event.target.closest('[data-scene-device]');
-    // First the rest of the form, then the row that changed: readSceneForm
-    // writes every select it finds back into the draft, and the authoritative
-    // value has to be applied after it, not before.
-    readSceneForm();
-    const d = state.sceneDraft;
-    if (!d) return;
-    if (deviceSelect) {
-      const i = Number(deviceSelect.dataset.sceneDevice);
-      sceneEdit.applyDeviceChoice(d.actions, i, deviceSelect.value);
-      renderSceneCode(i);
-      return;
-    }
-    // A function change only changes which value the hint describes.
-    renderSceneHint();
-  });
-
   els.sceneBody.addEventListener('click', (event) => {
     if (!(event.target instanceof Element)) return;
+    const d = state.sceneDraft;
+    if (!d) return;
+
+    // The picker's own button: open this list, close any other.
+    const openBtn = event.target.closest('[data-pick-btn]');
+    if (openBtn) {
+      const key = openBtn.dataset.pickBtn;
+      state.pickOpen = state.pickOpen === key ? '' : key;
+      renderSceneRows();
+      return;
+    }
+
+    // Choosing. The draft is written first, then the row is redrawn from it, so
+    // what the row shows and what gets saved are the same thing.
+    const choice = event.target.closest('[data-pick-val]');
+    if (choice) {
+      const i = Number(choice.dataset.pickRow);
+      const value = choice.dataset.pickVal;
+      if (choice.dataset.pickKind === 'device') {
+        sceneEdit.applyDeviceChoice(d.actions, i, value);
+        state.pickOpen = '';
+        renderSceneRow(i, 'code');
+        return;
+      }
+      d.actions[i].code = value;
+      state.pickOpen = '';
+      renderSceneRow(i, 'code');
+      return;
+    }
+
     const add = event.target.closest('[data-scene-add]');
     const rem = event.target.closest('[data-scene-remove]');
     if (!add && !rem) return;
     readSceneForm();
-    const d = state.sceneDraft;
-    if (!d) return;
     if (add) d.actions.push({ device: '', code: '', value: '' });
     if (rem) d.actions.splice(Number(rem.dataset.sceneRemove), 1);
     if (!d.actions.length) d.actions.push({ device: '', code: '', value: '' });
+    state.pickOpen = '';
     renderSceneEditor();
   });
+
+  // Escape closes an open list before it closes the dialog. It has to be the
+  // keydown, in the capture phase: preventing the dialog's own `cancel` event
+  // does not keep a modal dialog open in Chrome — measured, not assumed.
+  els.sceneEditor.addEventListener(
+    'keydown',
+    (event) => {
+      if (event.key !== 'Escape' || !state.pickOpen) return;
+      event.preventDefault();
+      event.stopPropagation();
+      closePick(true);
+    },
+    true,
+  );
 
   els.groupTabs.addEventListener('click', (event) => {
     if (!(event.target instanceof Element)) return;

@@ -67,8 +67,13 @@ test('index.html applies the stored mode before the first paint', () => {
     path.join(__dirname, '..', 'web', 'templates', 'index.html'),
     'utf8',
   );
-  assert.ok(html.includes("'" + view.KEY + "'"), 'the head script reads the stored key');
-  assert.ok(html.includes('dataset.view'), 'the head script sets the mode on <html>');
+  assert.ok(html.includes('/static/viewboot.js'), 'the mode is applied by a served script');
+  // The server sends `script-src 'self'`, so an inline script would be blocked
+  // and the wall would flash its header. The boot file must not be inline.
+  assert.ok(!/<script>(?![\s\S]*src=)/.test(html), 'no inline script in the shell');
+  const boot = fs.readFileSync(path.join(__dirname, '..', 'web', 'static', 'viewboot.js'), 'utf8');
+  assert.ok(boot.includes("'" + view.KEY + "'"), 'the boot script reads the stored key');
+  assert.ok(boot.includes('dataset.view'), 'the boot script sets the mode on <html>');
   assert.ok(html.includes('id="view-exit"'), 'the wall keeps a way back');
   assert.ok(!html.includes('id="customize"'), 'the header no longer carries the old editor switch');
 });

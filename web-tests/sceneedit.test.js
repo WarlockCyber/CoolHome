@@ -7,6 +7,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const sceneedit = require('../web/static/sceneedit.js');
 
@@ -52,4 +54,16 @@ test('an empty choice is a choice: it clears the row', () => {
   sceneedit.applyDeviceChoice(actions, 0, '');
   assert.strictEqual(actions[0].device, '');
   assert.strictEqual(actions[0].code, '');
+});
+
+test('the scene editor keeps its lists inside the dialog', () => {
+  // A native <select> puts its list in the browser's own window. On a wall
+  // tablet that list closed under the finger and the choice came back as
+  // "— устройство —", and the release could land as a click on a button
+  // underneath. The editor therefore draws its own list; this test is what
+  // stops a future edit from quietly putting <select> back.
+  const app = fs.readFileSync(path.join(__dirname, '..', 'web', 'static', 'app.js'), 'utf8');
+  assert.ok(!app.includes('data-scene-device='), 'no native device select in the scene editor');
+  assert.ok(!app.includes('data-scene-code='), 'no native function select in the scene editor');
+  assert.ok(app.includes('function pickBlock('), 'the row uses the page\'s own picker');
 });

@@ -9,22 +9,10 @@
   <meta name="coolhome-build" content="{{.Build}}">
   <!-- Режим отображения ставится на <html> до первой отрисовки: планшет на стене
        обычно открывается в полном экране, и шапка, появившаяся и тут же
-       исчезнувшая, читается как сбой, а не как настройка. Ключ и значения те же,
-       что в /static/view.js; тест в web-tests/view.test.js сверяет, что копии не
-       разошлись. -->
-  <script>
-    (function () {
-      var mode = 'edit';
-      try {
-        var params = new URLSearchParams(location.search);
-        var asked = params.get('view');
-        if (params.get('edit') === '1') mode = 'edit';
-        else if (asked === 'full' || asked === 'edit') mode = asked;
-        else if (localStorage.getItem('coolhome-view') === 'full') mode = 'full';
-      } catch (err) { /* хранилище закрыто: остаётся обычная страница */ }
-      document.documentElement.dataset.view = mode;
-    })();
-  </script>
+       исчезнувшая, читается как сбой, а не как настройка. Отдельный файл, а не
+       встроенный скрипт: сервер отдаёт `script-src 'self'`, и встроенный молча
+       блокируется. Без defer — он обязан выполниться до первой отрисовки. -->
+  <script src="/static/viewboot.js"></script>
   <title>CoolHome — умный дом</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230e1116'/%3E%3Cpath d='M8 15.5 16 9l8 6.5V23a1 1 0 0 1-1 1h-5v-6h-4v6H9a1 1 0 0 1-1-1z' fill='%236ee7b7'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/styles.css">
