@@ -662,3 +662,78 @@ func TestFileWithoutDescriptionsLoads(t *testing.T) {
 		t.Errorf("widgets lost: %+v", layout.Widgets)
 	}
 }
+
+// A scene made in the Tuya app cannot be deleted through the API, so hiding is
+// how an obsolete one leaves the list. It is local and reversible: the scene
+// itself keeps working from the app.
+func TestHiddenIsStoredAndReversible(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "d.json")
+	s := New(path)
+	if _, err := s.Save(Layout{Hidden: []string{" scene-1 ", "scene-2"}}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	reloaded, err := New(path).Hidden()
+	if err != nil {
+		t.Fatalf("Hidden: %v", err)
+	}
+	if len(reloaded) != 2 || reloaded[0] != "scene-1" || reloaded[1] != "scene-2" {
+		t.Fatalf("hidden = %v, want the trimmed list in order", reloaded)
+	}
+
+	// Showing a scene again is an empty list, and it must not touch the rest.
+	if _, err := s.Save(Layout{
+		Names:  map[string]string{"d1": "Кухня"},
+		Hidden: []string{},
+	}); err != nil {
+		t.Fatalf("Save with empty: %v", err)
+	}
+	layout, err := s.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(layout.Hidden) != 0 {
+		t.Errorf("hidden = %v, want none", layout.Hidden)
+	}
+	if layout.Names["d1"] != "Кухня" {
+		t.Errorf("showing a scene lost a name: %v", layout.Names)
+	}
+}
+
+func TestHiddenRejectsBadInput(t *testing.T) {
+	cases := map[string][]string{
+		"empty id":    {"scene-1", "  "},
+		"id too long": {strings.Repeat("x", 65)},
+		"duplicate":   {"scene-1", "scene-1"},
+	}
+	for name, in := range cases {
+		if _, err := NormalizeHidden(in); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: err = %v, want ErrInvalid", name, err)
+		}
+	}
+	tooMany := make([]string, MaxHidden+1)
+	for i := range tooMany {
+		tooMany[i] = "d" + string(rune('a'+i%26)) + string(rune('a'+i/26))
+	}
+	if _, err := NormalizeHidden(tooMany); !errors.Is(err, ErrInvalid) {
+		t.Errorf("too many: err = %v, want ErrInvalid", err)
+	}
+}
+
+// The slice must not be shared with the caller.
+func TestHiddenIsCopiedOnRead(t *testing.T) {
+	s := New("")
+	if _, err := s.Save(Layout{Hidden: []string{"scene-1"}}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.Hidden()
+	if err != nil {
+		t.Fatal(err)
+	}
+	first[0] = "подменено"
+	first = append(first, "лишнее")
+
+	second, _ := s.Hidden()
+	if len(second) != 1 || second[0] != "scene-1" {
+		t.Errorf("the store changed through the returned slice: %v", second)
+	}
+}

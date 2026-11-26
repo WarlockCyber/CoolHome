@@ -227,6 +227,13 @@
     // For a scene the name says what it is called, not which lamps it touches.
     descriptions: {},
     maxDescLen: 280,
+    // hidden lists the devices this installation does not show. A scene made in
+    // the Tuya app cannot be deleted through the API, so hiding is how an
+    // obsolete one leaves the list — and it is reversible.
+    hidden: [],
+    // showHidden reveals the hidden cards for review. Not stored: a wall tablet
+    // that always showed them would defeat the hiding.
+    showHidden: false,
     editMode: false,
     // draft is the working copy while editing; null when not editing.
     draft: null,
@@ -278,6 +285,10 @@
     problemMessage: document.getElementById('problem-message'),
     problemLink: document.getElementById('problem-link'),
     problemMute: document.getElementById('problem-mute'),
+    scenesBar: document.getElementById('scenes-bar'),
+    scenesCount: document.getElementById('scenes-count'),
+    scenesToggleHidden: document.getElementById('scenes-toggle-hidden'),
+    scenesEmpty: document.getElementById('scenes-empty'),
     rulesPanel: document.getElementById('rules'),
     rulesStatus: document.getElementById('rules-status'),
     rulesGroups: document.getElementById('rules-groups'),
@@ -356,6 +367,7 @@
         state.descriptions = board.descriptions;
       }
       if (board && Number(board.max_desc_len) > 0) state.maxDescLen = Number(board.max_desc_len);
+      if (board && Array.isArray(board.hidden)) state.hidden = board.hidden;
       state.lastSync = data.last_sync || null;
       state.error = data.error || '';
       // A reload mid-edit would throw away an unsaved layout, so it waits for
@@ -556,9 +568,10 @@
     // Scenes have their own tab. They are filtered out of the device grid and
     // the remote editor: a scene is a button, not a device with a state, and
     // mixing them made both lists worse.
-    const scenes = state.devices.filter(isScene);
+    const allScenes = state.devices.filter(isScene);
+    const scenes = allScenes.filter((d) => state.showHidden || !isHidden(d.id));
     const devices = state.devices.filter((d) => !isScene(d));
-    els.scenes.innerHTML = scenes.map(card).join('');
+    els.scenes.innerHTML = scenes.map((d) => card(d, { hidden: isHidden(d.id) })).join('');
 
     const tabs = { devices: 'devices', scenes: 'scenes', rules: 'rules' };
     for (const name of Object.keys(tabs)) {
@@ -568,6 +581,25 @@
       const btn = document.getElementById('tab-' + name);
       if (btn) btn.setAttribute('aria-selected', on ? 'true' : 'false');
     }
+    // The bar appears only when something is hidden, or when the hidden ones are
+    // being shown: a permanent control that is useless for a home with nothing
+    // hidden is clutter.
+    const hiddenCount = allScenes.filter((d) => isHidden(d.id)).length;
+    const showBar = state.tab === 'scenes' && (hiddenCount > 0 || state.showHidden);
+    els.scenesBar.hidden = !showBar;
+    if (showBar) {
+      els.scenesCount.textContent = hiddenCount === 0
+        ? 'Скрытых нет'
+        : 'Скрыто: ' + hiddenCount;
+      els.scenesToggleHidden.hidden = hiddenCount === 0;
+      els.scenesToggleHidden.textContent = state.showHidden ? 'Скрыть снова' : 'Показать скрытые';
+      els.scenesToggleHidden.setAttribute('aria-pressed', state.showHidden ? 'true' : 'false');
+    }
+    // An empty list because everything is hidden is not "no scenes at all": say
+    // which it is, or the page looks broken.
+    els.scenesEmpty.hidden =
+      state.tab !== 'scenes' || allScenes.length === 0 || scenes.length > 0;
+
     if (state.tab === 'rules') renderRules();
     // The "nothing here" hint belongs to the devices tab, which is the one that
     // shows the whole house.
@@ -1310,7 +1342,11 @@
     return category;
   }
 
-  function card(device) {
+  // card renders one device. `opts.hidden` marks a card that this installation
+  // hides: it is drawn only when the person asked to see the hidden ones, and it
+  // must not be mistaken for a normal entry in the list.
+  function card(device, opts) {
+    const cardOpts = opts || {};
     const values = Object.fromEntries((device.status || []).map((s) => [s.code, s.value]));
     const functions = device.functions || [];
     const fnCodes = new Set(functions.map((f) => f.code));
@@ -1352,6 +1388,7 @@
       '<article class="card' + (sensor ? ' card--sensor' : '') +
         (powerOnly ? ' card--power' : '') +
         (isScene(device) ? ' card--scene' : '') +
+        (cardOpts.hidden ? ' card--hidden' : '') +
         (device.online ? '' : ' card--offline') + '">' +
         '<div class="card-head">' +
           '<div>' +
@@ -1359,6 +1396,7 @@
             '<p class="card-sub">' + esc(device.product || categoryLabel(device) || 'устройство') + '</p>' +
           '</div>' +
           '<span class="state ' + stateClass + '"><span class="dot"></span>' + stateText + '</span>' +
+          (cardOpts.hidden ? '<span class="hidden-badge">скрыт</span>' : '') +
         '</div>' +
         (sensor
           ? sensorBody(device, tempPoint, values)
@@ -1382,6 +1420,35 @@
     );
   }
 
+  // isHidden reports whether this installation hides the device.
+  function isHidden(deviceID) {
+    return state.hidden.indexOf(deviceID) >= 0;
+  }
+
+  // setHidden hides or shows one device, saving the whole list in one request.
+  // The list is what the server stores, so a scene hidden on the tablet is hidden
+  // on the phone too — hiding is a decision about the house, not about a screen.
+  async function setHidden(deviceID, hide) {
+    const next = state.hidden.filter((id) => id !== deviceID);
+    if (hide) next.push(deviceID);
+    state.hidden = next;
+    render();
+    try {
+      await request('/api/dashboard', {
+        method: 'PUT',
+        body: JSON.stringify({ hidden: next }),
+      });
+      state.error = '';
+    } catch (err) {
+      state.error = 'Не удалось сохранить скрытые: ' + err.message;
+      // Put the list back: a hidden card that reappears after a reload is worse
+      // than an error that says so.
+      await load({ silent: true });
+      return;
+    }
+    await load({ silent: true });
+  }
+
   // descriptionOf returns the local note for a device, or ''.
   function descriptionOf(deviceID) {
     return state.descriptions[deviceID] || '';
@@ -1398,13 +1465,23 @@
     const noteHTML = note
       ? '<p class="scene-note">' + esc(note).replace(/\n/g, '<br>') + '</p>'
       : '';
+    const hidden = isHidden(device.id);
     return (
       (controls ? '<div class="controls">' + controls + '</div>' : '') +
       noteHTML +
-      '<button type="button" class="scene-note-edit" data-scene-note="' + esc(device.id) + '"' +
-        ' aria-label="' + esc((device.name || device.id) + ': что делает сцена') + '">' +
-        (note ? '✎ Описание' : '＋ Описание') +
-      '</button>'
+      '<div class="scene-tools">' +
+        '<button type="button" class="scene-note-edit" data-scene-note="' + esc(device.id) + '"' +
+          ' aria-label="' + esc((device.name || device.id) + ': что делает сцена') + '">' +
+          (note ? '✎ Описание' : '＋ Описание') +
+        '</button>' +
+        // Hiding is the local answer to "I cannot delete this scene": the cloud
+        // has no delete route this project may use, and a list of twenty scenes
+        // where four are dead is a list nobody reads.
+        '<button type="button" class="scene-note-edit" data-scene-hide="' + esc(device.id) + '"' +
+          ' aria-label="' + esc((device.name || device.id) + (hidden ? ': показать' : ': скрыть')) + '">' +
+          (hidden ? '↩ Показать' : '⌣ Скрыть') +
+        '</button>' +
+      '</div>'
     );
   }
 
@@ -2649,6 +2726,12 @@
       openRename(note.dataset.sceneNote);
       return;
     }
+    const hide = event.target.closest('[data-scene-hide]');
+    if (hide) {
+      const id = hide.dataset.sceneHide;
+      setHidden(id, !isHidden(id));
+      return;
+    }
     const button = event.target.closest('button[data-action="press"]');
     if (!button) return;
     send(button.dataset.id, { code: button.dataset.code, value: true });
@@ -2718,6 +2801,13 @@
   }
 
   // ---------- rules events ----------
+
+  els.scenesToggleHidden.addEventListener('click', () => {
+    // A view preference, not a stored decision: remembering it would let a wall
+    // tablet undo the hiding by being reloaded.
+    state.showHidden = !state.showHidden;
+    render();
+  });
 
   els.rulesAdd.addEventListener('click', () => openRuleEditor(null));
   els.rulesCheck.addEventListener('click', checkRules);

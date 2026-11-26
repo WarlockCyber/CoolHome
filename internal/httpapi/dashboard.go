@@ -31,6 +31,10 @@ type dashboardResponse struct {
 	Descriptions map[string]string `json:"descriptions"`
 	// MaxDescLen is the bound the server enforces on one description.
 	MaxDescLen int `json:"max_desc_len"`
+	// Hidden lists the devices this installation does not show: scenes made in
+	// the Tuya app cannot be deleted through the API, so hiding is how an
+	// obsolete one leaves the list.
+	Hidden []string `json:"hidden"`
 	// MaxNameLen is the bound the server enforces on one name.
 	MaxNameLen int `json:"max_name_len"`
 }
@@ -52,11 +56,15 @@ func (s *server) newDashboardResponse(layout dashboard.Layout) dashboardResponse
 	if layout.Descriptions == nil {
 		layout.Descriptions = map[string]string{}
 	}
+	if layout.Hidden == nil {
+		layout.Hidden = []string{}
+	}
 	return dashboardResponse{
 		Widgets:      layout.Widgets,
 		Panel:        layout.Panel,
 		Names:        layout.Names,
 		Descriptions: layout.Descriptions,
+		Hidden:       layout.Hidden,
 		MaxDescLen:   dashboard.MaxDescLen,
 		Editable:     s.dash.Path() != "",
 		MaxWidgets:   dashboard.MaxWidgets,
@@ -92,13 +100,15 @@ func (s *server) handleSaveDashboard(w http.ResponseWriter, r *http.Request) {
 		Panel        *[]string           `json:"panel"`
 		Names        *map[string]string  `json:"names"`
 		Descriptions *map[string]string  `json:"descriptions"`
+		Hidden       *[]string           `json:"hidden"`
 	}
 	if err := dec.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "некорректный JSON: "+err.Error())
 		return
 	}
-	if req.Widgets == nil && req.Panel == nil && req.Names == nil && req.Descriptions == nil {
-		writeError(w, http.StatusBadRequest, "нечего сохранять: нужен widgets, panel, names или descriptions")
+	if req.Widgets == nil && req.Panel == nil && req.Names == nil &&
+		req.Descriptions == nil && req.Hidden == nil {
+		writeError(w, http.StatusBadRequest, "нечего сохранять: нужен widgets, panel, names, descriptions или hidden")
 		return
 	}
 	// Update, not Current-then-Save: the two lists are edited from different
@@ -110,6 +120,10 @@ func (s *server) handleSaveDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.Panel != nil {
 			layout.Panel = *req.Panel
+		}
+		if req.Hidden != nil {
+			// The whole list, like names: an empty list shows everything again.
+			layout.Hidden = *req.Hidden
 		}
 		if req.Descriptions != nil {
 			// The whole map, like names: an empty value removes the note.

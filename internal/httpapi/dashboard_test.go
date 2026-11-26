@@ -459,3 +459,52 @@ func TestDashboardClearsADescription(t *testing.T) {
 		t.Errorf("clearing a description lost a name: %v", out.Names)
 	}
 }
+
+// Hiding a scene is the substitute for deleting one: the API cannot remove a
+// scene made in the Tuya app, so the page hides it locally. Saving the hidden
+// list must not disturb anything else, and an empty list shows everything again.
+func TestDashboardHidesAndShowsScenes(t *testing.T) {
+	srv := newDashboardServer(t, filepath.Join(t.TempDir(), "d.json"))
+	if resp, raw := putJSON(t, srv.URL+"/api/dashboard",
+		`{"names":{"d1":"Кухня"},"descriptions":{"scene-1":"что делает"}}`); resp.StatusCode != http.StatusOK {
+		t.Fatalf("setup: %d %s", resp.StatusCode, raw)
+	}
+
+	resp, raw := putJSON(t, srv.URL+"/api/dashboard", `{"hidden":["scene-1","scene-2"]}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("hidden: %d %s", resp.StatusCode, raw)
+	}
+	var out dashboardResponse
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Hidden) != 2 || out.Hidden[0] != "scene-1" {
+		t.Fatalf("hidden = %v", out.Hidden)
+	}
+	if out.Names["d1"] != "Кухня" || out.Descriptions["scene-1"] != "что делает" {
+		t.Errorf("hiding disturbed the rest: %+v", out)
+	}
+
+	// Showing everything again.
+	resp, raw = putJSON(t, srv.URL+"/api/dashboard", `{"hidden":[]}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("show: %d %s", resp.StatusCode, raw)
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Hidden) != 0 {
+		t.Errorf("hidden = %v, want none", out.Hidden)
+	}
+}
+
+func TestDashboardRejectsADuplicateHiddenEntry(t *testing.T) {
+	srv := newDashboardServer(t, filepath.Join(t.TempDir(), "d.json"))
+	resp, raw := putJSON(t, srv.URL+"/api/dashboard", `{"hidden":["s1","s1"]}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", resp.StatusCode, raw)
+	}
+	if !strings.Contains(string(raw), "twice") {
+		t.Errorf("body = %s, want an explanation", raw)
+	}
+}

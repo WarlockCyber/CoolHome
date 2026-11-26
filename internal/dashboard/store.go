@@ -82,6 +82,12 @@ type Layout struct {
 	// включить" tells nothing about which lamps it touches. The note is local,
 	// like the name, and the cloud is never told about it.
 	Descriptions map[string]string `json:"descriptions,omitempty"`
+	// Hidden lists the devices this installation does not show. Hiding is the
+	// answer to "I cannot delete this scene": a scene made in the Tuya app cannot
+	// be removed through the API, and a list of twenty scenes where four are
+	// obsolete is a list nobody reads. Hiding is local, reversible, and leaves the
+	// cloud untouched — the scene still works from the app.
+	Hidden []string `json:"hidden,omitempty"`
 }
 
 // MaxDescLen bounds a description. It is longer than a name because it is a
@@ -153,6 +159,7 @@ func (s *Store) currentLocked() Layout {
 		Panel:        append([]string(nil), s.layout.Panel...),
 		Names:        copyNames(s.layout.Names),
 		Descriptions: copyNames(s.layout.Descriptions),
+		Hidden:       append([]string(nil), s.layout.Hidden...),
 	}
 }
 
@@ -187,6 +194,16 @@ func (s *Store) Descriptions() (map[string]string, error) {
 		return nil, err
 	}
 	return layout.Descriptions, nil
+}
+
+// Hidden returns the ids this installation does not show. Copied like the rest:
+// the caller must not be able to edit the store's slice.
+func (s *Store) Hidden() ([]string, error) {
+	layout, err := s.Current()
+	if err != nil {
+		return nil, err
+	}
+	return layout.Hidden, nil
 }
 
 // Update reads the layout, lets `edit` change it, and stores the result — all
@@ -380,7 +397,46 @@ func Normalize(layout Layout) (Layout, error) {
 	if err != nil {
 		return Layout{}, err
 	}
-	return Layout{Widgets: out, Panel: panelOut, Names: names, Descriptions: descriptions}, nil
+	hidden, err := NormalizeHidden(layout.Hidden)
+	if err != nil {
+		return Layout{}, err
+	}
+	return Layout{
+		Widgets: out, Panel: panelOut, Names: names,
+		Descriptions: descriptions, Hidden: hidden,
+	}, nil
+}
+
+// MaxHidden bounds the hidden list. It is generous because the list is one line
+// per device, and a home with a hundred devices is not absurd.
+const MaxHidden = 200
+
+// NormalizeHidden validates the hidden list: trimmed ids, no duplicates, and the
+// same ordering rule as the panel so the file stays readable.
+func NormalizeHidden(in []string) ([]string, error) {
+	if len(in) > MaxHidden {
+		return nil, fmt.Errorf("%w: %d hidden devices, max %d", ErrInvalid, len(in), MaxHidden)
+	}
+	out := make([]string, 0, len(in))
+	seen := make(map[string]struct{}, len(in))
+	for i, id := range in {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return nil, fmt.Errorf("%w: hidden entry %d is empty", ErrInvalid, i)
+		}
+		if len(id) > 64 {
+			return nil, fmt.Errorf("%w: hidden entry %d is longer than 64 characters", ErrInvalid, i)
+		}
+		if _, dup := seen[id]; dup {
+			return nil, fmt.Errorf("%w: device %s is hidden twice", ErrInvalid, id)
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
 }
 
 // NormalizeDescriptions validates local notes: trimmed, bounded, and an empty

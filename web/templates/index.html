@@ -67,7 +67,19 @@
     <main>
       <div id="banner" class="banner" role="alert" hidden></div>
       <section id="devices" class="grid" role="tabpanel" aria-labelledby="tab-devices" aria-label="Устройства"></section>
+      <!-- Сцены, сделанные в приложении Tuya, через API не удалить: остаётся
+           скрыть их здесь. Переключатель показывает скрытые, чтобы спрятанную
+           сцену всегда можно было вернуть. -->
+      <div id="scenes-bar" class="scenes-bar" hidden>
+        <span id="scenes-count" class="scenes-count"></span>
+        <button type="button" class="ghost" id="scenes-toggle-hidden" aria-pressed="false">
+          Показать скрытые
+        </button>
+      </div>
       <section id="scenes" class="grid grid--scenes" role="tabpanel" aria-labelledby="tab-scenes" aria-label="Сценарии" hidden></section>
+      <p id="scenes-empty" class="empty" hidden>
+        Все сценарии скрыты. «Показать скрытые» вернёт их в список.
+      </p>
       <!-- Правила: условия, расписание и действия. Отдельная вкладка, потому
            что это не устройства и не сцены, а автоматика. -->
       <section id="rules" class="rules" role="tabpanel" aria-labelledby="tab-rules" aria-label="Правила" hidden>
