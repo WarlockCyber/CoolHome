@@ -108,6 +108,21 @@ func IsQuotaExhausted(err error) bool {
 	return api.Code == codeQuotaExhausted
 }
 
+// codeSceneNotQueryable is the cloud's answer when a rule exists but its content
+// cannot be read back: "This rule contains data that is currently not supported
+// for querying". Such a scene can still be triggered; it cannot be edited safely,
+// because there is nothing to send back unchanged.
+const codeSceneNotQueryable = 40003007
+
+// IsSceneNotQueryable reports a scene whose content the cloud will not return.
+func IsSceneNotQueryable(err error) bool {
+	var api *APIError
+	if !errors.As(err, &api) {
+		return false
+	}
+	return api.Code == codeSceneNotQueryable
+}
+
 // IsServiceNotSubscribed reports an API surface the Cloud project has not
 // subscribed. The request is well-formed; the project is missing a step in the
 // Tuya console, so retrying on the next poll cannot help.

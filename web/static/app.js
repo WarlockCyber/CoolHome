@@ -231,6 +231,12 @@
     // the Tuya app cannot be deleted through the API, so hiding is how an
     // obsolete one leaves the list — and it is reversible.
     hidden: [],
+    // scenesFromCloud is the editor's view: what each scene does, and whether the
+    // cloud will let it be read back. Fetched on demand, not on every poll — it
+    // costs one request per scene.
+    scenesFromCloud: null,
+    // sceneDraft is the scene being created or edited, or null.
+    sceneDraft: null,
     // showHidden reveals the hidden cards for review. Not stored: a wall tablet
     // that always showed them would defeat the hiding.
     showHidden: false,
@@ -289,6 +295,12 @@
     scenesCount: document.getElementById('scenes-count'),
     scenesToggleHidden: document.getElementById('scenes-toggle-hidden'),
     scenesEmpty: document.getElementById('scenes-empty'),
+    sceneCreate: document.getElementById('scene-create'),
+    sceneEditor: document.getElementById('scene-editor'),
+    sceneBody: document.getElementById('scene-body'),
+    sceneErrors: document.getElementById('scene-errors'),
+    sceneForm: document.getElementById('scene-form'),
+    sceneTitle: document.getElementById('scene-editor-title'),
     rulesPanel: document.getElementById('rules'),
     rulesStatus: document.getElementById('rules-status'),
     rulesGroups: document.getElementById('rules-groups'),
@@ -585,11 +597,14 @@
     // being shown: a permanent control that is useless for a home with nothing
     // hidden is clutter.
     const hiddenCount = allScenes.filter((d) => isHidden(d.id)).length;
-    const showBar = state.tab === 'scenes' && (hiddenCount > 0 || state.showHidden);
+    // The bar is the tab's own toolbar: it holds "create", so it is present
+    // whenever the tab is, and the hidden controls appear only when something is
+    // hidden.
+    const showBar = state.tab === 'scenes';
     els.scenesBar.hidden = !showBar;
     if (showBar) {
       els.scenesCount.textContent = hiddenCount === 0
-        ? 'Скрытых нет'
+        ? (allScenes.length ? 'Сценариев: ' + allScenes.length : '')
         : 'Скрыто: ' + hiddenCount;
       els.scenesToggleHidden.hidden = hiddenCount === 0;
       els.scenesToggleHidden.textContent = state.showHidden ? 'Скрыть снова' : 'Показать скрытые';
@@ -1481,6 +1496,13 @@
           ' aria-label="' + esc((device.name || device.id) + (hidden ? ': показать' : ': скрыть')) + '">' +
           (hidden ? '↩ Показать' : '⌣ Скрыть') +
         '</button>' +
+        // Editing is offered only when the cloud returns the scene's contents;
+        // otherwise the button says why instead of opening a form that cannot
+        // save.
+        '<button type="button" class="scene-note-edit" data-scene-edit="' + esc(device.id) + '"' +
+          ' aria-label="' + esc((device.name || device.id) + ': изменить сценарий') + '">' +
+          '✎ Изменить' +
+        '</button>' +
       '</div>'
     );
   }
@@ -1825,6 +1847,221 @@
     if (!els.problemMute.checked || !state.problem || !state.problem.code) return;
     state.mutedProblems.add(state.problem.code);
     state.notice = state.problem.message;
+  }
+
+  // ---------- scene editor ----------
+
+  // loadSceneDetails fetches what each scene does. It costs one request per
+  // scene, so it runs when the tab is opened or after a write — not on every
+  // eight-second poll.
+  async function loadSceneDetails() {
+    try {
+      const data = await request('/api/scenes');
+      state.scenesFromCloud = data && Array.isArray(data.scenes) ? data : { scenes: [], editable: false };
+    } catch (err) {
+      // Read-only fallback: the scene cards still work, only the editor is
+      // unavailable. Saying so is better than an empty editor.
+      state.scenesFromCloud = { scenes: [], editable: false, error: err.message };
+    }
+  }
+
+  // sceneView returns the editor's record for a scene, if it was fetched.
+  function sceneView(id) {
+    const all = (state.scenesFromCloud && state.scenesFromCloud.scenes) || [];
+    return all.find((s) => s.id === id) || null;
+  }
+
+  // pointLabelOf names a data point for the editor: "Лампа · Яркость".
+  function pointLabelOf(deviceID, code) {
+    return ruleLabel(deviceID, code);
+  }
+
+  function sceneDraftFrom(view) {
+    if (!view) {
+      return { id: '', name: '', actions: [{ device: '', code: '', value: '' }] };
+    }
+    const editable = (view.actions || []).filter((a) => !a.fixed);
+    return {
+      id: view.id,
+      name: view.name || '',
+      actions: editable.length
+        ? editable.map((a) => ({
+            device: a.device || '',
+            code: a.code || '',
+            value: a.value === undefined || a.value === null ? '' : String(a.value),
+          }))
+        : [{ device: '', code: '', value: '' }],
+    };
+  }
+
+  async function openSceneEditor(sceneID) {
+    // The view is fetched on demand: a stale copy would silently drop a change
+    // made in the app since the last load.
+    if (!state.scenesFromCloud) await loadSceneDetails();
+    const view = sceneID ? sceneView(sceneID) : null;
+    if (sceneID && !view) {
+      state.error = 'Сценарий не найден в списке — обновите страницу.';
+      render();
+      return;
+    }
+    if (view && !view.editable) {
+      // Editing would mean guessing what the scene contained: the cloud refuses
+      // to return it. Say that instead of opening a form that cannot be saved.
+      showProblem({
+        code: 'scene_not_editable',
+        title: 'Эту сцену нельзя изменить отсюда',
+        message: view.reason || 'Облако не отдаёт содержимое этой сцены.',
+        link: 'https://iot.tuya.com/cloud',
+        linkLabel: 'Открыть консоль Tuya',
+      });
+      return;
+    }
+    state.sceneDraft = sceneDraftFrom(view);
+    els.sceneTitle.textContent = sceneID ? 'Изменить сценарий' : 'Новый сценарий';
+    els.sceneErrors.hidden = true;
+    renderSceneEditor();
+    if (!els.sceneEditor.open && typeof els.sceneEditor.showModal === 'function') {
+      els.sceneEditor.showModal();
+    }
+  }
+
+  function closeSceneEditor() {
+    state.sceneDraft = null;
+    if (els.sceneEditor.open) els.sceneEditor.close();
+  }
+
+  function renderSceneEditor() {
+    const d = state.sceneDraft;
+    if (!d) return;
+    const view = d.id ? sceneView(d.id) : null;
+    // Actions the editor cannot build — an IR key press — are shown as text and
+    // kept on save: dropping them would change what the scene does.
+    const fixed = ((view && view.actions) || [])
+      .filter((a) => a.fixed)
+      .map(
+        (a) =>
+          '<li class="scene-fixed">' + esc(a.label || 'Действие, которое здесь не меняется') + '</li>',
+      )
+      .join('');
+
+    const rows = d.actions
+      .map((a, i) => {
+        return (
+          '<div class="rule-row" data-scene-action="' + i + '">' +
+            '<select data-scene-device="' + i + '" aria-label="Устройство действия ' + (i + 1) + '">' +
+              deviceOptions(a.device, '— устройство —') +
+            '</select>' +
+            '<select data-scene-code="' + i + '" aria-label="Функция действия ' + (i + 1) + '">' +
+              pointOptions(a.device, a.code) +
+            '</select>' +
+            '<input data-scene-value="' + i + '" type="text" value="' + esc(a.value) + '"' +
+              ' placeholder="значение" aria-label="Значение действия ' + (i + 1) + '">' +
+            '<button type="button" class="ghost ghost--danger rule-row-x" data-scene-remove="' + i + '"' +
+              ' aria-label="Убрать действие ' + (i + 1) + '">✕</button>' +
+          '</div>'
+        );
+      })
+      .join('');
+
+    const valueHint = pointHint(d.actions[0]);
+
+    els.sceneBody.innerHTML =
+      '<label class="rule-field">Название' +
+        '<input id="scene-name" type="text" maxlength="60" value="' + esc(d.name) + '"' +
+          ' placeholder="Например: вечерний свет"></label>' +
+      '<fieldset class="rule-set">' +
+        '<legend>Что делает</legend>' +
+        (fixed ? '<ul class="scene-fixed-list">' + fixed + '</ul>' : '') +
+        '<div id="scene-actions">' + rows + '</div>' +
+        '<button type="button" class="ghost rule-add-row" data-scene-add="1">＋ действие</button>' +
+        (valueHint ? '<p class="rule-hint">' + esc(valueHint) + '</p>' : '') +
+      '</fieldset>' +
+      '<p class="rule-hint">Сценарий сохраняется в облаке Tuya: он появится в ' +
+        'приложении и здесь. Удалить сцену через API нельзя — её можно скрыть.</p>';
+  }
+
+  // pointHint describes the value a selected data point accepts, so a person is
+  // not left guessing whether to type "true" or "вкл".
+  function pointHint(action) {
+    if (!action || !action.device || !action.code) return '';
+    const device = state.devices.find((d) => d.id === action.device);
+    if (!device) return '';
+    const fn = (device.functions || []).find((f) => f.code === action.code);
+    if (!fn) return '';
+    const type = String(fn.type || '').toLowerCase();
+    if (type === 'boolean') return 'Значение: true или false.';
+    if (type === 'enum') {
+      const options = fn.options || [];
+      return options.length ? 'Одно из: ' + options.join(', ') : '';
+    }
+    if (type === 'integer') {
+      const min = fn.min !== undefined ? fn.min : '…';
+      const max = fn.max !== undefined ? fn.max : '…';
+      // The scale is stated because the cloud takes the raw value: a brightness
+      // of 500 is 50 % on a scale of 1, and typing 50 would be barely visible.
+      const scale = fn.scale ? ' — в десятых, как в облаке' : '';
+      return 'Число от ' + min + ' до ' + max + scale + '.';
+    }
+    return '';
+  }
+
+  function readSceneForm() {
+    const d = state.sceneDraft;
+    if (!d) return;
+    const name = document.getElementById('scene-name');
+    if (name) d.name = name.value;
+    d.actions = d.actions.map((a, i) => {
+      const dev = els.sceneBody.querySelector('[data-scene-device="' + i + '"]');
+      const code = els.sceneBody.querySelector('[data-scene-code="' + i + '"]');
+      const val = els.sceneBody.querySelector('[data-scene-value="' + i + '"]');
+      return {
+        device: dev ? dev.value : a.device,
+        code: code ? code.value : a.code,
+        value: val ? val.value : a.value,
+      };
+    });
+  }
+
+  async function saveScene() {
+    const d = state.sceneDraft;
+    if (!d) return;
+    readSceneForm();
+    const name = d.name.trim();
+    const actions = d.actions
+      .filter((a) => a.device && a.code)
+      .map((a) => ({ device: a.device, code: a.code, value: ruleHelp.parseValue(a.value) }));
+
+    // The server validates too; this is what stops an obviously incomplete form
+    // from being sent and answered with a 400 the person has to decode.
+    const problems = [];
+    if (!name) problems.push('нужно название');
+    if (!actions.length) problems.push('нужно хотя бы одно действие');
+    if (problems.length) {
+      els.sceneErrors.hidden = false;
+      els.sceneErrors.textContent = problems.join('; ');
+      return;
+    }
+
+    const body = JSON.stringify({ name: name, actions: actions });
+    try {
+      const data = d.id
+        ? await request('/api/scenes/' + encodeURIComponent(d.id), { method: 'PUT', body })
+        : await request('/api/scenes', { method: 'POST', body });
+      if (data && Array.isArray(data.scenes)) state.scenesFromCloud = data;
+      closeSceneEditor();
+      state.error = '';
+      // The provider's list is invalidated server-side; a refresh makes the new
+      // card appear now rather than after the cache expires.
+      await load({ silent: true });
+    } catch (err) {
+      if (err.problem) {
+        closeSceneEditor();
+        showProblem(err.problem);
+        return;
+      }
+      els.sceneErrors.hidden = false;
+      els.sceneErrors.textContent = err.message;
+    }
   }
 
   // ---------- rules ----------
@@ -2699,6 +2936,9 @@
   function selectTab(name) {
     if (name !== 'devices' && name !== 'scenes' && name !== 'rules') return;
     state.tab = name;
+    // The scene details cost one request per scene, so they are fetched when the
+    // tab is opened rather than on every poll.
+    if (name === 'scenes' && !state.scenesFromCloud) loadSceneDetails().then(render);
     // Editing lives on the devices tab; leaving it must not leave the grid in a
     // half-edited state.
     if (name !== 'devices' && state.editMode) stopEditing();
@@ -2730,6 +2970,11 @@
     if (hide) {
       const id = hide.dataset.sceneHide;
       setHidden(id, !isHidden(id));
+      return;
+    }
+    const edit = event.target.closest('[data-scene-edit]');
+    if (edit) {
+      openSceneEditor(edit.dataset.sceneEdit);
       return;
     }
     const button = event.target.closest('button[data-action="press"]');
@@ -2801,6 +3046,58 @@
   }
 
   // ---------- rules events ----------
+
+  els.sceneCreate.addEventListener('click', () => openSceneEditor(''));
+
+  els.sceneForm.addEventListener('submit', (event) => {
+    // The form's own submission would close the dialog without saving.
+    event.preventDefault();
+    saveScene();
+  });
+
+  els.sceneEditor.addEventListener('click', (event) => {
+    if (!(event.target instanceof Element)) return;
+    if (event.target.closest('[data-scene-close]') || event.target === els.sceneEditor) {
+      closeSceneEditor();
+    }
+  });
+
+  els.sceneEditor.addEventListener('close', () => {
+    state.sceneDraft = null;
+  });
+
+  // Typing updates the draft without a repaint: a repaint on every keystroke
+  // would take the caret out of the field being typed into.
+  els.sceneBody.addEventListener('input', () => readSceneForm());
+
+  // A different device offers different functions, so that repaints.
+  els.sceneBody.addEventListener('change', (event) => {
+    if (!(event.target instanceof Element)) return;
+    readSceneForm();
+    if (event.target.matches('[data-scene-device]')) {
+      // The old function belongs to the old device; keeping it would save a
+      // pair that cannot exist.
+      const i = Number(event.target.getAttribute('data-scene-device'));
+      if (state.sceneDraft && state.sceneDraft.actions[i]) {
+        state.sceneDraft.actions[i].code = '';
+      }
+      renderSceneEditor();
+    }
+  });
+
+  els.sceneBody.addEventListener('click', (event) => {
+    if (!(event.target instanceof Element)) return;
+    const add = event.target.closest('[data-scene-add]');
+    const rem = event.target.closest('[data-scene-remove]');
+    if (!add && !rem) return;
+    readSceneForm();
+    const d = state.sceneDraft;
+    if (!d) return;
+    if (add) d.actions.push({ device: '', code: '', value: '' });
+    if (rem) d.actions.splice(Number(rem.dataset.sceneRemove), 1);
+    if (!d.actions.length) d.actions.push({ device: '', code: '', value: '' });
+    renderSceneEditor();
+  });
 
   els.scenesToggleHidden.addEventListener('click', () => {
     // A view preference, not a stored decision: remembering it would let a wall

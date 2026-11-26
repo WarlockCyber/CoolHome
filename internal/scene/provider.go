@@ -113,6 +113,16 @@ func (p *Provider) scenes(ctx context.Context) ([]tuya.Scene, error) {
 	return list, nil
 }
 
+// Invalidate drops the cached scene list. The editor calls it after a write:
+// without it a scene created here would not appear for up to cacheTTL, and a new
+// scene that does not show up reads as a failed save.
+func (p *Provider) Invalidate() {
+	p.mu.Lock()
+	p.cached = nil
+	p.fetchedAt = time.Time{}
+	p.mu.Unlock()
+}
+
 // ListDevices returns every enabled scene as a device.
 func (p *Provider) ListDevices(ctx context.Context, ids []string) ([]tuya.Device, error) {
 	list, err := p.scenes(ctx)

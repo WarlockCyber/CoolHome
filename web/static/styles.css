@@ -1534,6 +1534,24 @@ footer {
   margin-left: 0.4rem;
 }
 
+/* Actions the editor cannot build, such as an IR key press: listed so the person
+   sees the whole scene, marked as fixed so nobody expects to change them here. */
+.scene-fixed-list {
+  list-style: none;
+  margin: 0 0 0.5rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: 10px;
+  border: 1px dashed var(--border-strong);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.scene-fixed {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
 /* Note and hide share a row under the button: both are about the card, not
    about running the scene. */
 .scene-tools { display: flex; gap: 0.25rem; flex-wrap: wrap; }

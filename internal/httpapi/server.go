@@ -15,6 +15,7 @@ import (
 	"github.com/WarlockCyber/CoolHome/internal/dashboard"
 	"github.com/WarlockCyber/CoolHome/internal/home"
 	"github.com/WarlockCyber/CoolHome/internal/rules"
+	"github.com/WarlockCyber/CoolHome/internal/scene"
 	"github.com/WarlockCyber/CoolHome/internal/tuya"
 	"github.com/WarlockCyber/CoolHome/web"
 )
@@ -46,6 +47,9 @@ type Options struct {
 	// RulesLocation is the zone schedules are read in, so a check and the runner
 	// agree about what "22:00" means. Nil means time.Local.
 	RulesLocation *time.Location
+	// SceneEditor creates and edits scenes. Nil means the scene service is not
+	// configured: the page then shows scenes read-only.
+	SceneEditor *scene.Editor
 }
 
 type server struct {
@@ -115,6 +119,10 @@ func New(svc *home.Service, opts Options) (http.Handler, error) {
 	mux.HandleFunc("GET /api/rules", s.handleRules)
 	mux.HandleFunc("PUT /api/rules", s.handleSaveRules)
 	mux.HandleFunc("POST /api/rules/check", s.handleRulesCheck)
+	mux.HandleFunc("GET /api/scenes", s.handleScenes)
+	mux.HandleFunc("POST /api/scenes", s.handleCreateScene)
+	mux.HandleFunc("PUT /api/scenes/{id}", s.handleUpdateScene)
+	mux.HandleFunc("PUT /api/scenes/{id}/enabled", s.handleSceneEnabled)
 	mux.HandleFunc("POST /api/rules/{id}/enabled", s.handleRuleEnabled)
 	// Editing one rule sends one rule: the whole-set PUT is kept for scripts, but
 	// the page must not use it, or two screens overwrite each other.

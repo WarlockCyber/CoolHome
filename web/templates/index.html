@@ -75,6 +75,7 @@
         <button type="button" class="ghost" id="scenes-toggle-hidden" aria-pressed="false">
           Показать скрытые
         </button>
+        <button type="button" class="ghost" id="scene-create">＋ Сценарий</button>
       </div>
       <section id="scenes" class="grid grid--scenes" role="tabpanel" aria-labelledby="tab-scenes" aria-label="Сценарии" hidden></section>
       <p id="scenes-empty" class="empty" hidden>
@@ -133,6 +134,24 @@
       <button type="button" class="ghost sheet-close" data-sheet="close" aria-label="Закрыть">✕</button>
     </div>
     <div id="sheet-body" class="sheet-body"></div>
+  </dialog>
+
+  <!-- Редактор сцены. Отдельное окно по той же причине, что и у правил: список
+       сцен перерисовывается опросом, и форма внутри него теряла бы набранное. -->
+  <dialog id="scene-editor" class="sheet sheet--rule" aria-labelledby="scene-editor-title">
+    <form id="scene-form" method="dialog" class="rule-form">
+      <div class="sheet-head">
+        <h2 id="scene-editor-title" class="sheet-title">Сценарий</h2>
+        <button type="button" class="ghost sheet-close" data-scene-close="1" aria-label="Закрыть">✕</button>
+      </div>
+      <div id="scene-body" class="rule-body"></div>
+      <div class="rule-actions">
+        <p id="scene-errors" class="rule-errors" role="alert" hidden></p>
+        <span class="rename-spacer"></span>
+        <button type="button" class="ghost" data-scene-close="1">Отмена</button>
+        <button type="submit" class="ghost rename-save" id="scene-save">Сохранить</button>
+      </div>
+    </form>
   </dialog>
 
   <!-- Редактор правила. Модальное окно по той же причине, что и настройки

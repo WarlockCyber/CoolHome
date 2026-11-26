@@ -59,6 +59,9 @@ func run() error {
 	}
 
 	var provider home.Provider
+	// Filled only in real mode: the demo home has no scenes to edit.
+	var sceneClient *tuya.Client
+	var sceneProvider *scene.Provider
 	if cfg.Demo {
 		provider = demo.New()
 		logger.Info("demo mode: fake devices, the Tuya cloud is not contacted")
@@ -69,6 +72,9 @@ func run() error {
 		}
 		provider = client
 		logger.Info("tuya client ready", "base_url", client.BaseURL(), "poll_interval", cfg.PollInterval.String())
+		// Kept for the scene editor, which is built after the home service: it
+		// validates actions against the live thing models.
+		sceneClient = client
 		// Optional surfaces are additive: the composite keeps the dashboard
 		// working when one of them is not subscribed.
 		var extra []home.Provider
@@ -83,7 +89,8 @@ func run() error {
 				"blasters", len(cfg.IRBlasters), "learned_switches_hidden", cfg.Scenes)
 		}
 		if cfg.Scenes {
-			extra = append(extra, scene.New(client, cfg.SpaceID, logger))
+			sceneProvider = scene.New(client, cfg.SpaceID, logger)
+			extra = append(extra, sceneProvider)
 			logger.Info("tap-to-run scenes enabled")
 		}
 		if cfg.Scenes {
@@ -101,6 +108,19 @@ func run() error {
 	}
 
 	svc := home.New(provider, cfg.DeviceIDs, cfg.PollInterval, logger)
+
+	// The scene editor needs the live home to validate actions: a scene that
+	// writes a function the device does not have would be accepted by the cloud
+	// and fail at night.
+	var sceneEditor *scene.Editor
+	if cfg.Scenes && sceneClient != nil {
+		sceneEditor = scene.NewEditor(sceneClient, cfg.SpaceID, svc.Snapshot, logger)
+		if sceneProvider != nil {
+			// A created scene must show up on the next refresh, not after the
+			// provider's five-minute cache.
+			sceneEditor.OnChange(sceneProvider.Invalidate)
+		}
+	}
 
 	// Rules are opt-in: an automation that sends commands to a real house should
 	// be something a person turned on.
@@ -161,6 +181,7 @@ func run() error {
 		ConsoleURL:     cfg.ConsoleURL,
 		Rules:          runner,
 		RulesLocation:  rulesLocation(cfg.TZ),
+		SceneEditor:    sceneEditor,
 	})
 	if err != nil {
 		return err
