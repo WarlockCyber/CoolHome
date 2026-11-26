@@ -42,6 +42,7 @@ web-check:
 	node --check web/static/panel.js
 	node --check web/static/names.js
 	node --check web/static/rules.js
+	node --check web/static/sceneedit.js
 	node --check web/static/power.js
 	node --check web/static/view.js
 

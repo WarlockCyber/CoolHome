@@ -32,6 +32,11 @@
   // Which tab shows which devices, and how a device moves between tabs.
   const groupLib = window.CoolHomeGroups;
 
+  // What choosing a device in the scene editor does to the draft row. Kept
+  // apart because the rule is small and the failure is invisible: a wrong one
+  // puts the row back to "— устройство —" the moment it is repainted.
+  const sceneEdit = window.CoolHomeSceneEdit;
+
   // The two ways to look at the screen: the ordinary page and the wall. Which
   // one is shown belongs to the device, so the rule is about addresses and
   // storage rather than about the DOM.
@@ -388,6 +393,26 @@
   // state the rest of the page uses, so the two cannot disagree once a request
   // has come back.
   applyView();
+
+  // ---------- dialogs ----------
+  //
+  // A click on the backdrop closes a dialog — but only when the press started
+  // there too. The click alone is not evidence: dragging a selection out of the
+  // dialog, or letting go inside a <select> whose popup reaches past the
+  // dialog's edge, otherwise arrives as a click on the backdrop and closes the
+  // window under the finger. That is how the scene editor was reported shutting
+  // itself while a device was being picked.
+  function backdropTracker(dialog) {
+    let pressedOutside = false;
+    dialog.addEventListener('pointerdown', (event) => {
+      pressedOutside = event.target === dialog;
+    });
+    return (event) => {
+      const onBackdrop = event.target === dialog && pressedOutside;
+      pressedOutside = false;
+      return onBackdrop;
+    };
+  }
 
   // ---------- transport ----------
 
@@ -1787,10 +1812,12 @@
     }
   });
 
+  const problemBackdrop = backdropTracker(els.problem);
   els.problem.addEventListener('click', (event) => {
     if (!(event.target instanceof Element)) return;
-    // A click on the backdrop lands on the dialog element itself.
-    if (event.target.closest('[data-problem="close"]') || event.target === els.problem) {
+    // A click on the backdrop lands on the dialog element itself — and only
+    // counts when the press started there.
+    if (event.target.closest('[data-problem="close"]') || problemBackdrop(event)) {
       closeProblem();
     }
   });
@@ -2269,24 +2296,7 @@
       )
       .join('');
 
-    const rows = d.actions
-      .map((a, i) => {
-        return (
-          '<div class="rule-row" data-scene-action="' + i + '">' +
-            '<select data-scene-device="' + i + '" aria-label="Устройство действия ' + (i + 1) + '">' +
-              deviceOptions(a.device, '— устройство —') +
-            '</select>' +
-            '<select data-scene-code="' + i + '" aria-label="Функция действия ' + (i + 1) + '">' +
-              pointOptions(a.device, a.code) +
-            '</select>' +
-            '<input data-scene-value="' + i + '" type="text" value="' + esc(a.value) + '"' +
-              ' placeholder="значение" aria-label="Значение действия ' + (i + 1) + '">' +
-            '<button type="button" class="ghost ghost--danger rule-row-x" data-scene-remove="' + i + '"' +
-              ' aria-label="Убрать действие ' + (i + 1) + '">✕</button>' +
-          '</div>'
-        );
-      })
-      .join('');
+    const rows = d.actions.map((a, i) => sceneRow(a, i)).join('');
 
     const valueHint = pointHint(d.actions[0]);
 
@@ -2299,10 +2309,55 @@
         (fixed ? '<ul class="scene-fixed-list">' + fixed + '</ul>' : '') +
         '<div id="scene-actions">' + rows + '</div>' +
         '<button type="button" class="ghost rule-add-row" data-scene-add="1">＋ действие</button>' +
-        (valueHint ? '<p class="rule-hint">' + esc(valueHint) + '</p>' : '') +
+        '<p class="rule-hint" id="scene-hint"' + (valueHint ? '' : ' hidden') + '>' +
+          esc(valueHint) +
+        '</p>' +
       '</fieldset>' +
       '<p class="rule-hint">Сценарий сохраняется в облаке Tuya: он появится в ' +
         'приложении и здесь. Удалить сцену через API нельзя — её можно скрыть.</p>';
+  }
+
+  // sceneRow builds one action row. Its own function, because a device change
+  // updates only part of one row: rebuilding the whole editor under a finger
+  // takes the focus off the control that was just used, and — the report from a
+  // wall tablet — can put the choice back to "— устройство —".
+  function sceneRow(a, i) {
+    return (
+      '<div class="rule-row" data-scene-action="' + i + '">' +
+        '<select data-scene-device="' + i + '" aria-label="Устройство действия ' + (i + 1) + '">' +
+          deviceOptions(a.device, '— устройство —') +
+        '</select>' +
+        '<select data-scene-code="' + i + '" aria-label="Функция действия ' + (i + 1) + '">' +
+          pointOptions(a.device, a.code) +
+        '</select>' +
+        '<input data-scene-value="' + i + '" type="text" value="' + esc(a.value) + '"' +
+          ' placeholder="значение" aria-label="Значение действия ' + (i + 1) + '">' +
+        '<button type="button" class="ghost ghost--danger rule-row-x" data-scene-remove="' + i + '"' +
+          ' aria-label="Убрать действие ' + (i + 1) + '">✕</button>' +
+      '</div>'
+    );
+  }
+
+  // renderSceneCode refreshes the function list of one row after its device
+  // changed. Only the list depends on the device, so only the list is rebuilt:
+  // the select the person is using stays where it is, with its value and focus.
+  function renderSceneCode(i) {
+    const d = state.sceneDraft;
+    if (!d || !d.actions[i]) return;
+    const code = els.sceneBody.querySelector('[data-scene-code="' + i + '"]');
+    if (code) code.innerHTML = pointOptions(d.actions[i].device, d.actions[i].code);
+    renderSceneHint();
+  }
+
+  // renderSceneHint updates the note about the value the selected function
+  // accepts. It sits outside the row, so it is refreshed separately.
+  function renderSceneHint() {
+    const d = state.sceneDraft;
+    const p = document.getElementById('scene-hint');
+    if (!d || !p) return;
+    const hint = pointHint(d.actions[0]);
+    p.textContent = hint;
+    p.hidden = !hint;
   }
 
   // pointHint describes the value a selected data point accepts, so a person is
@@ -3162,6 +3217,7 @@
     openRename(open.dataset.renameOpen);
   });
 
+  const renameBackdrop = backdropTracker(els.rename);
   els.rename.addEventListener('click', (event) => {
     if (!(event.target instanceof Element)) return;
     const action = event.target.closest('[data-rename]');
@@ -3174,8 +3230,9 @@
       return;
     }
     // A click on the backdrop lands on the dialog element itself; closing
-    // without saving is what the user means by it.
-    if (event.target === els.rename) closeRename();
+    // without saving is what the user means by it. A press that started inside
+    // and ended outside is a drag, not that.
+    if (renameBackdrop(event)) closeRename();
   });
 
   els.rename.addEventListener('close', () => {
@@ -3196,14 +3253,16 @@
     }
   });
 
+  const sheetBackdrop = backdropTracker(els.sheet);
   els.sheet.addEventListener('click', (event) => {
     const target = event.target;
     if (target instanceof Element && target.closest('[data-sheet="close"]')) {
       closeSheet();
       return;
     }
-    // A click on the backdrop lands on the dialog element itself.
-    if (target === els.sheet) closeSheet();
+    // A click on the backdrop lands on the dialog element itself; a press that
+    // started inside it is a drag, not a dismissal.
+    if (sheetBackdrop(event)) closeSheet();
   });
 
   // Esc closes natively; forget the state too so the next render does not
@@ -3487,9 +3546,10 @@
     saveScene();
   });
 
+  const sceneBackdrop = backdropTracker(els.sceneEditor);
   els.sceneEditor.addEventListener('click', (event) => {
     if (!(event.target instanceof Element)) return;
-    if (event.target.closest('[data-scene-close]') || event.target === els.sceneEditor) {
+    if (event.target.closest('[data-scene-close]') || sceneBackdrop(event)) {
       closeSceneEditor();
     }
   });
@@ -3502,19 +3562,29 @@
   // would take the caret out of the field being typed into.
   els.sceneBody.addEventListener('input', () => readSceneForm());
 
-  // A different device offers different functions, so that repaints.
+  // A different device offers different functions, so the row has to follow.
+  //
+  // It follows in place, and the choice is taken from the control that fired.
+  // Rebuilding the whole editor here is what broke the choice on a wall tablet:
+  // the repaint read the draft in the same tick the value was set, and the row
+  // came back as "— устройство —" the moment the mouse was released.
   els.sceneBody.addEventListener('change', (event) => {
     if (!(event.target instanceof Element)) return;
+    const deviceSelect = event.target.closest('[data-scene-device]');
+    // First the rest of the form, then the row that changed: readSceneForm
+    // writes every select it finds back into the draft, and the authoritative
+    // value has to be applied after it, not before.
     readSceneForm();
-    if (event.target.matches('[data-scene-device]')) {
-      // The old function belongs to the old device; keeping it would save a
-      // pair that cannot exist.
-      const i = Number(event.target.getAttribute('data-scene-device'));
-      if (state.sceneDraft && state.sceneDraft.actions[i]) {
-        state.sceneDraft.actions[i].code = '';
-      }
-      renderSceneEditor();
+    const d = state.sceneDraft;
+    if (!d) return;
+    if (deviceSelect) {
+      const i = Number(deviceSelect.dataset.sceneDevice);
+      sceneEdit.applyDeviceChoice(d.actions, i, deviceSelect.value);
+      renderSceneCode(i);
+      return;
     }
+    // A function change only changes which value the hint describes.
+    renderSceneHint();
   });
 
   els.sceneBody.addEventListener('click', (event) => {
@@ -3564,9 +3634,10 @@
     createGroupFromDialog();
   });
 
+  const groupBackdrop = backdropTracker(els.groupDialog);
   els.groupDialog.addEventListener('click', (event) => {
     if (!(event.target instanceof Element)) return;
-    if (event.target.closest('[data-group-close]') || event.target === els.groupDialog) closeGroupDialog();
+    if (event.target.closest('[data-group-close]') || groupBackdrop(event)) closeGroupDialog();
   });
 
   els.groupName.addEventListener('keydown', (event) => {
@@ -3620,9 +3691,10 @@
     saveRule();
   });
 
+  const ruleBackdrop = backdropTracker(els.ruleEditor);
   els.ruleEditor.addEventListener('click', (event) => {
     if (!(event.target instanceof Element)) return;
-    if (event.target.closest('[data-rule="cancel"]') || event.target === els.ruleEditor) {
+    if (event.target.closest('[data-rule="cancel"]') || ruleBackdrop(event)) {
       closeRuleEditor();
     }
   });
