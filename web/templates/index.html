@@ -221,6 +221,22 @@
     </form>
   </dialog>
 
+  <!-- Выбор устройства или функции для действия сценария. Отдельное окно, а не
+       список под кнопкой: список, нарисованный внутри окна сценария, всё равно
+       спорил за место с его полями и обрезался по краю, а список браузера
+       (<select>) закрывался под рукой на планшете. Своё окно ничего не
+       перекрывает и закрывается только явным действием. -->
+  <dialog id="pick-dialog" class="sheet sheet--picker" aria-labelledby="pick-title">
+    <div class="sheet-head">
+      <h2 id="pick-title" class="sheet-title">Выбор</h2>
+      <button type="button" class="ghost sheet-close" data-pick-close="1" aria-label="Закрыть">✕</button>
+    </div>
+    <div id="pick-body" class="picker-body" role="listbox"></div>
+    <div class="picker-actions">
+      <button type="button" class="ghost" data-pick-close="1">Отмена</button>
+    </div>
+  </dialog>
+
   <!-- Переименование устройства. Отдельное окно, а не поле внутри настроек:
        настройки перерисовываются каждые восемь секунд вместе с данными, и
        набранное имя исчезало бы из-под пальца. Это окно живёт само по себе и

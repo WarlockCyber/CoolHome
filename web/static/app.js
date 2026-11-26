@@ -278,9 +278,9 @@
     scenesFromCloud: null,
     // sceneDraft is the scene being created or edited, or null.
     sceneDraft: null,
-    // pickOpen names the open picker in the scene editor ("device:0"), or ''.
-    // The list belongs to the page, so this state is the whole truth about it.
-    pickOpen: '',
+    // pick is the choice the picker window is open for — {kind, row} — or null.
+    // The window belongs to the page, so this state is the whole truth about it.
+    pick: null,
     // showHidden reveals the hidden cards for review. Not stored: a wall tablet
     // that always showed them would defeat the hiding.
     showHidden: false,
@@ -375,6 +375,9 @@
     sceneErrors: document.getElementById('scene-errors'),
     sceneForm: document.getElementById('scene-form'),
     sceneTitle: document.getElementById('scene-editor-title'),
+    pickDialog: document.getElementById('pick-dialog'),
+    pickTitle: document.getElementById('pick-title'),
+    pickBody: document.getElementById('pick-body'),
     rulesPanel: document.getElementById('rules'),
     rulesStatus: document.getElementById('rules-status'),
     rulesGroups: document.getElementById('rules-groups'),
@@ -2272,7 +2275,7 @@
       return;
     }
     state.sceneDraft = sceneDraftFrom(view);
-    state.pickOpen = '';
+    state.pick = null;
     els.sceneTitle.textContent = sceneID ? 'Изменить сценарий' : 'Новый сценарий';
     els.sceneErrors.hidden = true;
     renderSceneEditor();
@@ -2283,7 +2286,7 @@
 
   function closeSceneEditor() {
     state.sceneDraft = null;
-    state.pickOpen = '';
+    state.pick = null;
     if (els.sceneEditor.open) els.sceneEditor.close();
   }
 
@@ -2345,36 +2348,25 @@
     );
   }
 
-  // pickBlock is one picker: a button showing the choice, and the list under it.
-  // The list is only drawn when open, so a row costs nothing while it is idle.
+  // pickBlock is one picker: a button showing the current choice. The choosing
+  // happens in its own window (see openPick), so the row holds nothing that can
+  // open over the fields below it or be clipped by the dialog's edge.
   function pickBlock(kind, i, value, options, placeholder) {
-    const open = state.pickOpen === kind + ':' + i;
     const chosen = options.find((o) => o.value === value);
     // A stored choice whose device has left the home shows its id rather than
     // the placeholder: the row would otherwise claim nothing is chosen while
     // the action is still there, and a save would keep something invisible.
-    const label = chosen ? chosen.label : value || placeholder;
-    const list = options
-      .map(
-        (o) =>
-          '<button type="button" role="option" class="pick-opt' +
-            (o.value === value ? ' pick-opt--on' : '') + '"' +
-            ' aria-selected="' + (o.value === value ? 'true' : 'false') + '"' +
-            ' data-pick-val="' + esc(o.value) + '" data-pick-kind="' + kind + '"' +
-            ' data-pick-row="' + i + '">' + esc(o.label) + '</button>',
-      )
-      .join('');
+    // The placeholder is glued with non-breaking spaces: "— функция —" split
+    // after the dash reads as two things, and the button is narrow.
+    const label = !chosen || chosen.empty ? value || placeholder.replace(/ /g, '\u00a0') : chosen.label;
     return (
-      '<div class="pick">' +
+      '<div class="pick-field">' +
         '<button type="button" class="pick-btn" data-pick-btn="' + kind + ':' + i + '"' +
-          ' aria-haspopup="listbox" aria-expanded="' + (open ? 'true' : 'false') + '"' +
-          ' aria-label="' + esc(kind === 'device' ? 'Устройство' : 'Функция') + ' действия ' + (i + 1) + '">' +
+          ' aria-haspopup="dialog"' +
+          ' aria-label="' + esc(kind === 'device' ? 'Устройство' : 'Функция') + ' действия ' + (i + 1) + ': ' + esc(label) + '">' +
           '<span class="pick-label">' + esc(label) + '</span>' +
           '<span class="pick-caret" aria-hidden="true">▾</span>' +
         '</button>' +
-        (open
-          ? '<div class="pick-list" role="listbox" data-pick-list="' + kind + ':' + i + '">' + list + '</div>'
-          : '') +
       '</div>'
     );
   }
@@ -2383,7 +2375,9 @@
   // empty one: an action row starts with nothing chosen, and a person must be
   // able to take a choice back.
   function deviceChoices() {
-    const out = [{ value: '', label: '— устройство —' }];
+    // The empty entry is the way to take a choice back, and it is marked so the
+    // button can show its own placeholder instead of a row label.
+    const out = [{ value: '', label: '— устройство —', empty: true }];
     for (const d of state.devices.filter((x) => !isScene(x))) {
       out.push({ value: d.id, label: d.name || d.id });
     }
@@ -2391,7 +2385,7 @@
   }
 
   function pointChoices(deviceID) {
-    const out = [{ value: '', label: '— функция —' }];
+    const out = [{ value: '', label: '— функция —', empty: true }];
     for (const p of selectablePoints(deviceID)) {
       out.push({ value: p.code, label: p.label });
     }
@@ -2409,11 +2403,108 @@
     row.innerHTML = sceneRowInner(d.actions[i], i);
     if (focus) {
       const next = els.sceneBody.querySelector('[data-pick-btn="' + focus + ':' + i + '"]');
-      // Focus, not click: opening the next list on its own would take the
-      // decision away from the person.
       if (next) next.focus();
     }
     renderSceneHint();
+  }
+
+  // ---------- choosing a device or a function ----------
+  //
+  // The list is a window of its own. A list drawn inside the scene editor was
+  // still a panel laid over that dialog's own fields: on a narrow screen it was
+  // clipped at the edge, and near the bottom it opened over the buttons. A modal
+  // window has the whole screen for one decision and needs no positioning.
+
+  function pickTitle(kind) {
+    return kind === 'device' ? 'Устройство действия' : 'Функция действия';
+  }
+
+  function pickOptions(kind, row) {
+    const d = state.sceneDraft;
+    if (!d || !d.actions[row]) return [];
+    return kind === 'device' ? deviceChoices() : pointChoices(d.actions[row].device);
+  }
+
+  function openPick(kind, row) {
+    const d = state.sceneDraft;
+    if (!d || !d.actions[row]) return;
+    // What is typed in the value field belongs to the draft before the screen
+    // changes, so nothing is lost if the person cancels here.
+    readSceneForm();
+    state.pick = { kind: kind, row: row };
+    // Shown first, painted second: showModal moves the focus to the first
+    // focusable element in the dialog (the ✕), and a list that opens with the
+    // focus on "close" answers the arrow keys with nothing.
+    if (!els.pickDialog.open && typeof els.pickDialog.showModal === 'function') {
+      els.pickDialog.showModal();
+    }
+    renderPick();
+  }
+
+  function closePick() {
+    const pick = state.pick;
+    state.pick = null;
+    if (els.pickDialog.open) els.pickDialog.close();
+    // Back to the button that asked, so a keyboard or a wall tablet does not
+    // land somewhere else in the form.
+    if (!pick) return;
+    const btn = els.sceneBody.querySelector('[data-pick-btn="' + pick.kind + ':' + pick.row + '"]');
+    if (btn) btn.focus();
+  }
+
+  // renderPick draws the window from state.pick. It is repainted, not rebuilt on
+  // each open, so the list always shows what the draft currently holds.
+  function renderPick() {
+    const pick = state.pick;
+    if (!pick) return;
+    const d = state.sceneDraft;
+    const current = d && d.actions[pick.row] ? d.actions[pick.row][pick.kind === 'device' ? 'device' : 'code'] : '';
+    const options = pickOptions(pick.kind, pick.row);
+    els.pickTitle.textContent = pickTitle(pick.kind);
+    els.pickBody.innerHTML = options
+      .map(
+        (o) =>
+          '<button type="button" role="option" class="picker-row' +
+            (o.value === current ? ' picker-row--on' : '') + '"' +
+            ' aria-selected="' + (o.value === current ? 'true' : 'false') + '"' +
+            ' data-pick-val="' + esc(o.value) + '">' +
+            '<span class="picker-row-label">' + esc(o.label) + '</span>' +
+            (o.value === current ? '<span class="picker-row-mark" aria-hidden="true">✓</span>' : '') +
+          '</button>',
+      )
+      .join('');
+    // The focus starts on the current choice, so Enter keeps it and the rows
+    // around it are one arrow key away. When nothing is chosen yet there is no
+    // current choice worth landing on, so the first real option takes the focus.
+    const on = els.pickBody.querySelector('.picker-row--on:not([data-pick-val=""])');
+    const first = els.pickBody.querySelector('[data-pick-val]:not([data-pick-val=""])');
+    const empty = els.pickBody.querySelector('.picker-row--on');
+    const target = on || first || empty;
+    if (target) target.focus({ preventScroll: true });
+  }
+
+  // choosePick applies the choice to the draft and redraws the row from it, so
+  // what the row shows and what gets saved are the same thing.
+  function choosePick(value) {
+    const pick = state.pick;
+    if (!pick) return;
+    const d = state.sceneDraft;
+    if (!d || !d.actions[pick.row]) {
+      closePick();
+      return;
+    }
+    if (pick.kind === 'device') {
+      sceneEdit.applyDeviceChoice(d.actions, pick.row, value);
+    } else {
+      d.actions[pick.row].code = value;
+    }
+    state.pick = null;
+    if (els.pickDialog.open) els.pickDialog.close();
+    renderSceneRow(pick.row);
+    // The function follows the device, so after a device is chosen the next
+    // question is the function: the focus is put on it, ready and not opened.
+    const btn = els.sceneBody.querySelector('[data-pick-btn="code:' + pick.row + '"]');
+    if (btn) btn.focus();
   }
 
   // renderSceneHint updates the note about the value the selected function
@@ -3610,42 +3701,16 @@
     saveScene();
   });
 
-  // A list inside the dialog is closed by the same code that opened it: the
-  // page owns the popup now, so there is no browser window to dismiss it, and
-  // no release that arrives as a click somewhere else.
-  function closePick(refocus) {
-    const key = state.pickOpen;
-    if (!key) return;
-    state.pickOpen = '';
-    renderSceneRows();
-    if (!refocus) return;
-    const btn = els.sceneBody.querySelector('[data-pick-btn="' + key + '"]');
-    if (btn) btn.focus();
-  }
-
-  // renderSceneRows redraws the rows that own an open list, and nothing else.
-  function renderSceneRows() {
-    const d = state.sceneDraft;
-    if (!d) return;
-    const rows = els.sceneBody.querySelectorAll('[data-scene-action]');
-    for (let i = 0; i < rows.length; i++) renderSceneRow(i);
-  }
-
   const sceneBackdrop = backdropTracker(els.sceneEditor);
   els.sceneEditor.addEventListener('click', (event) => {
     if (!(event.target instanceof Element)) return;
-    if (event.target.closest('[data-scene-close]') || sceneBackdrop(event)) {
-      closeSceneEditor();
-      return;
-    }
-    // A click anywhere else in the dialog closes an open list: that is what the
-    // list being "open" means.
-    if (state.pickOpen && !event.target.closest('.pick')) closePick(false);
+    if (event.target.closest('[data-scene-close]') || sceneBackdrop(event)) closeSceneEditor();
   });
 
   els.sceneEditor.addEventListener('close', () => {
     state.sceneDraft = null;
-    state.pickOpen = '';
+    state.pick = null;
+    if (els.pickDialog.open) els.pickDialog.close();
   });
 
   // Typing updates the draft without a repaint: a repaint on every keystroke
@@ -3657,30 +3722,11 @@
     const d = state.sceneDraft;
     if (!d) return;
 
-    // The picker's own button: open this list, close any other.
     const openBtn = event.target.closest('[data-pick-btn]');
     if (openBtn) {
       const key = openBtn.dataset.pickBtn;
-      state.pickOpen = state.pickOpen === key ? '' : key;
-      renderSceneRows();
-      return;
-    }
-
-    // Choosing. The draft is written first, then the row is redrawn from it, so
-    // what the row shows and what gets saved are the same thing.
-    const choice = event.target.closest('[data-pick-val]');
-    if (choice) {
-      const i = Number(choice.dataset.pickRow);
-      const value = choice.dataset.pickVal;
-      if (choice.dataset.pickKind === 'device') {
-        sceneEdit.applyDeviceChoice(d.actions, i, value);
-        state.pickOpen = '';
-        renderSceneRow(i, 'code');
-        return;
-      }
-      d.actions[i].code = value;
-      state.pickOpen = '';
-      renderSceneRow(i, 'code');
+      const colon = key.lastIndexOf(':');
+      openPick(key.slice(0, colon), Number(key.slice(colon + 1)));
       return;
     }
 
@@ -3691,23 +3737,55 @@
     if (add) d.actions.push({ device: '', code: '', value: '' });
     if (rem) d.actions.splice(Number(rem.dataset.sceneRemove), 1);
     if (!d.actions.length) d.actions.push({ device: '', code: '', value: '' });
-    state.pickOpen = '';
     renderSceneEditor();
   });
 
-  // Escape closes an open list before it closes the dialog. It has to be the
-  // keydown, in the capture phase: preventing the dialog's own `cancel` event
-  // does not keep a modal dialog open in Chrome — measured, not assumed.
-  els.sceneEditor.addEventListener(
-    'keydown',
-    (event) => {
-      if (event.key !== 'Escape' || !state.pickOpen) return;
+  // ---------- the picker window ----------
+
+  const pickBackdrop = backdropTracker(els.pickDialog);
+  els.pickDialog.addEventListener('click', (event) => {
+    if (!(event.target instanceof Element)) return;
+    const row = event.target.closest('[data-pick-val]');
+    if (row) {
+      choosePick(row.dataset.pickVal);
+      return;
+    }
+    if (event.target.closest('[data-pick-close]') || pickBackdrop(event)) closePick();
+  });
+
+  // Escape closes the picker on its own: it is the topmost dialog, so the scene
+  // editor under it stays open. The state has to be forgotten too, or the next
+  // repaint would think a choice is still being made.
+  els.pickDialog.addEventListener('close', () => {
+    const pick = state.pick;
+    state.pick = null;
+    if (!pick) return;
+    // Focus back into the form, not into the void: the dialog is gone, and the
+    // browser would otherwise leave the focus on <body>.
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
+    const btn = els.sceneBody.querySelector('[data-pick-btn="' + pick.kind + ':' + pick.row + '"]');
+    if (btn) btn.focus();
+  });
+
+  // Enter picks the focused row; the arrow keys walk the list, because a list of
+  // a wall tablet's devices is longer than a phone screen.
+  els.pickBody.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      const row = event.target instanceof Element ? event.target.closest('[data-pick-val]') : null;
+      if (!row) return;
       event.preventDefault();
-      event.stopPropagation();
-      closePick(true);
-    },
-    true,
-  );
+      choosePick(row.dataset.pickVal);
+      return;
+    }
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    const rows = Array.from(els.pickBody.querySelectorAll('[data-pick-val]'));
+    const at = rows.indexOf(document.activeElement);
+    if (!rows.length) return;
+    event.preventDefault();
+    const next = event.key === 'ArrowDown' ? Math.min(rows.length - 1, at + 1) : Math.max(0, at - 1);
+    rows[next].focus({ preventScroll: true });
+  });
 
   els.groupTabs.addEventListener('click', (event) => {
     if (!(event.target instanceof Element)) return;

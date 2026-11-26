@@ -56,14 +56,29 @@ test('an empty choice is a choice: it clears the row', () => {
   assert.strictEqual(actions[0].code, '');
 });
 
-test('the scene editor keeps its lists inside the dialog', () => {
+test('the scene editor never uses a native select', () => {
   // A native <select> puts its list in the browser's own window. On a wall
   // tablet that list closed under the finger and the choice came back as
   // "— устройство —", and the release could land as a click on a button
-  // underneath. The editor therefore draws its own list; this test is what
+  // underneath. The editor therefore draws its own picker; this test is what
   // stops a future edit from quietly putting <select> back.
   const app = fs.readFileSync(path.join(__dirname, '..', 'web', 'static', 'app.js'), 'utf8');
   assert.ok(!app.includes('data-scene-device='), 'no native device select in the scene editor');
   assert.ok(!app.includes('data-scene-code='), 'no native function select in the scene editor');
   assert.ok(app.includes('function pickBlock('), 'the row uses the page\'s own picker');
+});
+
+test('the scene editor chooses in a window of its own', () => {
+  // A list inside the scene editor is a panel over that dialog's own fields: on
+  // a narrow screen it was clipped at the edge and near the bottom it covered
+  // the buttons. The choice therefore happens in a separate modal, which needs
+  // no positioning and has the screen to itself.
+  const html = fs.readFileSync(path.join(__dirname, '..', 'web', 'templates', 'index.html'), 'utf8');
+  assert.ok(html.includes('id="pick-dialog"'), 'there is a picker window');
+  assert.ok(html.includes('class="sheet sheet--picker"'), 'it is a modal sheet');
+  const app = fs.readFileSync(path.join(__dirname, '..', 'web', 'static', 'app.js'), 'utf8');
+  assert.ok(app.includes('function openPick('), 'the row opens the picker');
+  assert.ok(app.includes('els.pickDialog.showModal()'), 'the picker is shown as a modal');
+  // The rows themselves carry no list any more.
+  assert.ok(!app.includes('data-pick-list'), 'no list is drawn inside the row');
 });

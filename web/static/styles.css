@@ -1232,20 +1232,73 @@ footer {
 
 .rule-row select { flex: 1 1 8rem; }
 
-/* The scene editor's own picker. A <select> would put the list in the browser's
-   window: on a wall tablet it closed under the finger and the choice was lost.
-   This one is markup inside the dialog, so opening and closing it is the page's
-   own business — and the list can be read with a glance, not a hover. */
-.pick { position: relative; flex: 1 1 8rem; min-width: 0; }
+/* The picker: a button showing the choice, and a window to change it. A list
+   drawn inside the scene editor laid itself over that dialog's fields and was
+   clipped at its edge on a narrow screen; the browser's own <select> popup
+   closed under the finger on a tablet. A window of its own is neither. */
+.sheet--picker { width: min(28rem, 92vw); max-height: min(80vh, 40rem); }
 
-/* The device name is the longest thing in a row and the one a person reads, so
-   it gets the room; the function is usually one word. */
-.rule-row > .pick:first-child { flex: 2 1 10rem; }
+.picker-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.25rem 0.6rem 0.6rem;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.picker-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  font: inherit;
+  font-size: 0.95rem;
+  text-align: left;
+  color: var(--text);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  /* A wall tablet is pressed with a finger, not a mouse. */
+  min-height: 2.9rem;
+  padding: 0.6rem 0.75rem;
+  cursor: pointer;
+}
+
+.picker-row:hover { background: rgba(255, 255, 255, 0.04); }
+.picker-row:focus-visible { outline: none; border-color: var(--accent); background: var(--accent-dim); }
+.picker-row--on { color: var(--accent); }
+
+.picker-row-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.picker-row-mark { flex: none; }
+
+.picker-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.75rem 1.25rem 1.1rem;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* Not `.pick`: that class belongs to the list of devices in the settings sheet,
+   and sharing it put a card's border and padding around every picker button. */
+.pick-field { flex: 1 1 8rem; min-width: 0; }
+
+/* The device gets a line of its own. Its name is the longest thing in a row and
+   the one a person reads, and squeezing it next to the function left either an
+   ellipsis ("Термостат на ку…" and "Термостат на кухне" read the same) or a
+   placeholder broken in half. The function, the value and ✕ share the next
+   line, where a wall tablet's finger still has room. */
+.rule-row > .pick-field:first-child { flex: 1 1 100%; }
+.rule-row > .pick-field + .pick-field { flex: 2 1 9rem; }
 
 .pick-btn {
   display: flex;
   align-items: center;
   gap: 0.4rem;
+  min-height: 2.5rem;
   width: 100%;
   font: inherit;
   font-size: 0.85rem;
@@ -1261,44 +1314,13 @@ footer {
 .pick-btn:hover,
 .pick-btn[aria-expanded="true"] { border-color: var(--accent); }
 
-.pick-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Names wrap at spaces; a placeholder with non-breaking spaces therefore stays
+   on one line. `anywhere` broke "— функция —" after the dash, which reads as two
+   separate things. */
+.pick-label { flex: 1; min-width: 0; line-height: 1.25; overflow-wrap: break-word; }
 
 .pick-caret { flex: none; color: var(--muted); font-size: 0.7rem; }
 
-.pick-list {
-  position: absolute;
-  z-index: 5;
-  top: calc(100% + 0.25rem);
-  left: 0;
-  min-width: 100%;
-  max-height: 15rem;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  padding: 0.25rem;
-  border-radius: 12px;
-  border: 1px solid var(--border-strong);
-  background: var(--surface-raised);
-  box-shadow: var(--shadow);
-}
-
-.pick-opt {
-  font: inherit;
-  font-size: 0.85rem;
-  text-align: left;
-  color: var(--text);
-  background: none;
-  border: 0;
-  border-radius: 8px;
-  padding: 0.5rem 0.55rem;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.pick-opt:hover,
-.pick-opt:focus-visible { background: var(--accent-dim); }
-
-.pick-opt--on { color: var(--accent); }
 .rule-row input[type="text"] { flex: 1 1 6rem; }
 .rule-row-x { flex: none; padding: 0.4rem 0.5rem; }
 
