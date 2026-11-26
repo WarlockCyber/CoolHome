@@ -395,3 +395,108 @@ func TestSetStatusWritesTheWholeDocument(t *testing.T) {
 		t.Error("id was sent in the body")
 	}
 }
+
+// A scene whose actions are all IR key presses has nothing the editor builds.
+// Renaming it must still work: the actions are carried over untouched, and an
+// empty device-action list is not a reason to refuse.
+func TestUpdateRenamesASceneWithOnlyFixedActions(t *testing.T) {
+	irAction := tuya.SceneAction{
+		Executor: tuya.ExecutorIR, EntityID: "blaster-1",
+		Property: map[string]any{"function_code": "keyId", "function_value": "12"},
+	}
+	doc := tuya.SceneDocument{
+		"id": "s1", "name": "старое", "type": "scene", "status": "enable",
+		"space_id": "space-1", "running_mode": "cloud", "conditions": []any{},
+		"actions": []any{irAction},
+	}
+	stub := &stubClient{
+		scenes: []tuya.Scene{{ID: "s1", Name: "старое", Status: "enable"}},
+		details: map[string]tuya.SceneDetail{
+			"s1": {ID: "s1", Name: "старое", Status: "enable",
+				Actions: []tuya.SceneAction{irAction}, Document: doc},
+		},
+	}
+	err := newEditor(t, stub).Update(context.Background(), "s1", Draft{Name: "новое имя"})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if len(stub.updated) != 1 {
+		t.Fatalf("sent %d updates", len(stub.updated))
+	}
+	sent := stub.updated[0]
+	if sent["name"] != "новое имя" {
+		t.Errorf("name = %v", sent["name"])
+	}
+	actions := sent["actions"].([]any)
+	if len(actions) != 1 || actions[0].(tuya.SceneAction).Executor != tuya.ExecutorIR {
+		t.Errorf("the IR action was lost: %#v", actions)
+	}
+}
+
+// A scene with no actions at all cannot be saved as empty — the cloud refuses
+// that with "actions param is empty", and a scene that does nothing is not what
+// anyone meant.
+func TestUpdateRefusesToLeaveASceneEmpty(t *testing.T) {
+	stub := &stubClient{
+		scenes: []tuya.Scene{{ID: "s1", Name: "пустая"}},
+		details: map[string]tuya.SceneDetail{
+			"s1": {ID: "s1", Name: "пустая",
+				Document: tuya.SceneDocument{
+					"id": "s1", "name": "пустая", "type": "scene", "status": "enable",
+					"space_id": "space-1", "conditions": []any{}, "actions": []any{},
+				}},
+		},
+	}
+	err := newEditor(t, stub).Update(context.Background(), "s1", Draft{Name: "имя"})
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid", err)
+	}
+	if len(stub.updated) != 0 {
+		t.Error("an empty scene was written")
+	}
+}
+
+// The page iterates actions; a scene with none must give it a list, not null.
+func TestDescribeSendsAnEmptyListNotEmptyNull(t *testing.T) {
+	stub := &stubClient{
+		scenes: []tuya.Scene{{ID: "s1", Name: "пустая"}},
+		details: map[string]tuya.SceneDetail{
+			"s1": {ID: "s1", Name: "пустая", Document: tuya.SceneDocument{"id": "s1"}},
+		},
+	}
+	views, err := newEditor(t, stub).Describe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if views[0].Actions == nil {
+		t.Fatal("actions is nil; the page would have to check for null")
+	}
+	if len(views[0].Actions) != 0 {
+		t.Errorf("actions = %+v", views[0].Actions)
+	}
+}
+
+// A scene that triggers another rule is shown as fixed with a readable label,
+// not as an unknown executor.
+func TestDescribeLabelsRuleTrigger(t *testing.T) {
+	stub := &stubClient{
+		scenes: []tuya.Scene{{ID: "s1", Name: "цепочка"}},
+		details: map[string]tuya.SceneDetail{
+			"s1": {ID: "s1", Name: "цепочка",
+				Actions: []tuya.SceneAction{
+					{Executor: "rule_trigger", EntityID: "other"},
+				},
+				Document: tuya.SceneDocument{"id": "s1"}},
+		},
+	}
+	views, err := newEditor(t, stub).Describe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(views[0].Actions) != 1 || !views[0].Actions[0].Fixed {
+		t.Fatalf("actions = %+v", views[0].Actions)
+	}
+	if !strings.Contains(views[0].Actions[0].Label, "правила") {
+		t.Errorf("label = %q, want it named", views[0].Actions[0].Label)
+	}
+}

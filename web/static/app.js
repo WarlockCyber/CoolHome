@@ -1894,19 +1894,28 @@
 
   function sceneDraftFrom(view) {
     if (!view) {
-      return { id: '', name: '', actions: [{ device: '', code: '', value: '' }] };
+      return { id: '', name: '', hasFixed: false, actions: [{ device: '', code: '', value: '' }] };
     }
     const editable = (view.actions || []).filter((a) => !a.fixed);
+    // fixed counts: a scene whose actions are all IR key presses has nothing to
+    // edit here, and renaming it must still be possible — the server keeps those
+    // actions as they are.
+    const hasFixed = (view.actions || []).length > editable.length;
     return {
       id: view.id,
       name: view.name || '',
+      hasFixed: hasFixed,
+      // No placeholder row when there is nothing to fill in: an empty row that
+      // must be deleted before saving is a trap.
       actions: editable.length
         ? editable.map((a) => ({
             device: a.device || '',
             code: a.code || '',
             value: a.value === undefined || a.value === null ? '' : String(a.value),
           }))
-        : [{ device: '', code: '', value: '' }],
+        : hasFixed
+          ? []
+          : [{ device: '', code: '', value: '' }],
     };
   }
 
@@ -2051,7 +2060,9 @@
     // from being sent and answered with a 400 the person has to decode.
     const problems = [];
     if (!name) problems.push('нужно название');
-    if (!actions.length) problems.push('нужно хотя бы одно действие');
+    // Only when the scene would end up with nothing at all: a scene whose
+    // actions are all fixed keeps them, so an empty editable list is fine there.
+    if (!actions.length && !d.hasFixed) problems.push('нужно хотя бы одно действие');
     if (problems.length) {
       els.sceneErrors.hidden = false;
       els.sceneErrors.textContent = problems.join('; ');

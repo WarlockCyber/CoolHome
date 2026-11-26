@@ -125,9 +125,10 @@ func (e *Editor) validate(draft Draft) ([]tuya.SceneAction, error) {
 	if utf8.RuneCountInString(name) > MaxNameLen {
 		return nil, invalid("название длиннее %d символов", MaxNameLen)
 	}
-	if len(draft.Actions) == 0 {
-		return nil, invalid("в сцене должно быть хотя бы одно действие")
-	}
+	// No "at least one action" here: a scene whose actions are all IR key presses
+	// has none the editor builds, and renaming it must still be possible. Whether
+	// the resulting scene has any action at all is checked where the whole list
+	// is known — see Create and Update.
 	if len(draft.Actions) > MaxActions {
 		return nil, invalid("действий больше %d", MaxActions)
 	}
@@ -196,6 +197,9 @@ func (e *Editor) Create(ctx context.Context, draft Draft) (string, error) {
 		"conditions": []any{},
 		"actions":    actionsToDoc(actions),
 	}
+	if len(actions) == 0 {
+		return "", invalid("в сцене должно быть хотя бы одно действие")
+	}
 	id, err := e.client.CreateScene(ctx, doc)
 	if err != nil {
 		return "", fmt.Errorf("scene: create: %w", err)
@@ -228,8 +232,16 @@ func (e *Editor) Update(ctx context.Context, id string, draft Draft) error {
 	if doc == nil {
 		return fmt.Errorf("%w: облако не вернуло документ сцены", ErrNotEditable)
 	}
+	merged := mergeActions(detail.Actions, actions)
+	// The cloud refuses an empty action list, and so does this: a scene that does
+	// nothing is not what somebody meant. Counted on the merged list, because a
+	// scene whose only actions are IR key presses is legitimately non-empty with
+	// nothing the editor built.
+	if len(merged) == 0 {
+		return invalid("в сцене должно быть хотя бы одно действие")
+	}
 	doc["name"] = strings.TrimSpace(draft.Name)
-	doc["actions"] = mergeActions(detail.Actions, actions)
+	doc["actions"] = merged
 	// The document is the same one that was read, so these two are already
 	// right; setting them makes the intent explicit and tolerates a document
 	// that arrived without them.
@@ -247,7 +259,7 @@ func (e *Editor) Update(ctx context.Context, id string, draft Draft) error {
 		return fmt.Errorf("scene: update: %w", err)
 	}
 	e.changed()
-	e.log.Info("scene updated", "id", id, "name", draft.Name, "actions", len(actions))
+	e.log.Info("scene updated", "id", id, "name", draft.Name, "actions", len(merged))
 	return nil
 }
 
@@ -326,7 +338,10 @@ func (e *Editor) Describe(ctx context.Context) ([]EditableView, error) {
 	}
 	out := make([]EditableView, 0, len(list))
 	for _, s := range list {
-		view := EditableView{ID: s.ID, Name: s.Name, Status: s.Status}
+		// Actions is an empty list, never null: the page iterates it, and a scene
+		// with no actions at all (or one that could not be read) must not make it
+		// check for null at every use.
+		view := EditableView{ID: s.ID, Name: s.Name, Status: s.Status, Actions: []ViewAction{}}
 		detail, err := e.client.GetScene(ctx, s.ID)
 		switch {
 		case err == nil:
@@ -358,6 +373,10 @@ func fixedLabel(a tuya.SceneAction) string {
 	switch a.Executor {
 	case tuya.ExecutorIR:
 		return "ИК-кнопка пульта (не редактируется здесь)"
+	case "rule_trigger":
+		return "Запуск другого правила (не редактируется здесь)"
+	case "device_group_issue":
+		return "Группа устройств (не редактируется здесь)"
 	default:
 		if a.Executor == "" {
 			return "Действие, которое редактор не знает"
