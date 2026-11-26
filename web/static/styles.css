@@ -157,6 +157,38 @@ main {
   min-width: 0;
 }
 
+/* ---------- display modes ---------- */
+
+/* Full screen is the wall: the panel and the dashboard, nothing else. The whole
+   chrome goes together — a mode that hid half the header would look like a
+   rendering fault rather than a choice.
+
+   The mode sits on <html> so the inline script in index.html can set it before
+   the first paint: on a tablet the header appearing and then vanishing reads as
+   a glitch. */
+[data-view="full"] .topbar,
+[data-view="full"] footer { display: none; }
+
+/* The one way out. It has to survive an empty panel: the panel's own buttons
+   live in the panel, which is not drawn when it holds no cards, and a mode one
+   cannot leave is worse than no mode at all. Faint until touched — on a wall it
+   must not compete with the cards, but it must stay findable. */
+.view-exit {
+  position: fixed;
+  right: clamp(0.75rem, 2vw, 1.5rem);
+  bottom: clamp(0.75rem, 2vw, 1.5rem);
+  z-index: 30;
+  min-height: 2.6rem;
+  padding: 0.55rem 0.95rem;
+  font-size: 0.82rem;
+  opacity: 0.6;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(10px);
+}
+
+.view-exit:hover,
+.view-exit:focus-visible { opacity: 1; border-color: var(--accent); }
+
 /* ---------- device groups ---------- */
 
 /* The tab strip above the grid. It scrolls sideways rather than wrapping: a

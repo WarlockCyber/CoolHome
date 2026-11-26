@@ -32,6 +32,11 @@
   // Which tab shows which devices, and how a device moves between tabs.
   const groupLib = window.CoolHomeGroups;
 
+  // The two ways to look at the screen: the ordinary page and the wall. Which
+  // one is shown belongs to the device, so the rule is about addresses and
+  // storage rather than about the DOM.
+  const viewLib = window.CoolHomeView;
+
   const REFRESH_MS = 8000;
   const TOKEN_KEY = 'coolhome.token';
 
@@ -286,6 +291,14 @@
     // own switch and touches nothing else: with groups on the main screen, one
     // button that replaced the grid with a remote editor no longer made sense.
     panelEdit: false,
+    // view is how the screen looks: viewLib.EDIT is the ordinary page,
+    // viewLib.FULL the wall — panel, dashboard and one way back. Stored per
+    // device, not in the layout: a phone and the tablet on the wall want
+    // different things, and the server has no business remembering either.
+    view: viewLib.initial(
+      viewLib.fromQuery(new URLSearchParams(location.search)),
+      readStoredView(),
+    ),
     // draft is the working copy while editing; null when not editing.
     draft: null,
     dragIndex: null,
@@ -336,6 +349,8 @@
     problemLink: document.getElementById('problem-link'),
     problemMute: document.getElementById('problem-mute'),
     panelEdit: document.getElementById('panel-edit'),
+    viewFull: document.getElementById('view-full'),
+    viewExit: document.getElementById('view-exit'),
     groupTabs: document.getElementById('group-tabs'),
     groupEmpty: document.getElementById('group-empty'),
     groupDialog: document.getElementById('group-dialog'),
@@ -367,6 +382,12 @@
     ruleForm: document.getElementById('rule-form'),
     ruleTitle: document.getElementById('rule-editor-title'),
   };
+
+  // The mode the page opens in was set on <html> by the inline script in
+  // index.html, which runs before the first paint. This repeats it from the
+  // state the rest of the page uses, so the two cannot disagree once a request
+  // has come back.
+  applyView();
 
   // ---------- transport ----------
 
@@ -630,6 +651,10 @@
       ? 'Обновлено в ' + new Date(state.lastSync).toLocaleTimeString('ru-RU')
       : 'Нет данных';
     els.refresh.disabled = false;
+    // The display mode is painted by every render, not only when it changes:
+    // the attribute on <html> is what styles.css keys off, and leaving it to one
+    // call site is how a toggle ends up changing state but not the page.
+    applyView();
 
     // An open modal is repainted, not closed: the refresh must keep showing it
     // with fresh values.
@@ -3252,6 +3277,80 @@
     if (!out) return;
     const point = findPoint(input.dataset.id, input.dataset.code);
     if (point) out.textContent = format(Number(input.value), point);
+  });
+
+  // ---------- display modes ----------
+  //
+  // Two ways to look at the same screen. "Режим редактирования" is the ordinary
+  // page: header, tabs, refresh, footer. "Полный экран" is the wall: the panel
+  // and the dashboard, and one control to get back — a corridor tablet should
+  // show the house, not the software.
+
+  function readStoredView() {
+    try {
+      return localStorage.getItem(viewLib.KEY) || '';
+    } catch (err) {
+      // A browser that refuses storage still gets the mode for this page; it
+      // just will not remember it.
+      return '';
+    }
+  }
+
+  // applyView paints the mode. The attribute on <html> is the single switch the
+  // CSS keys off, so the header, the footer and the exit button cannot drift
+  // apart.
+  function applyView() {
+    const full = viewLib.isFull(state.view);
+    document.documentElement.dataset.view = state.view;
+    els.viewFull.hidden = full;
+    els.viewExit.hidden = !full;
+    // The panel sticks below the header, and its offset is the header's measured
+    // height. In full screen there is no header, so the height has to be
+    // published again — otherwise the panel keeps a gap the size of a bar that
+    // is not drawn.
+    publishHeaderHeight();
+  }
+
+  function setView(mode) {
+    const target = viewLib.normalize(mode);
+    if (!target || target === state.view) return;
+    state.view = target;
+    if (viewLib.isFull(target)) {
+      // The wall is the devices. Scenes and rules are switched from the header,
+      // which this mode hides, and both editing modes are ways back into chrome
+      // that is not drawn here — leaving one on would make the exit button
+      // return to a half-edited page.
+      if (state.editMode) stopEditing();
+      if (state.panelEdit) {
+        state.panelEdit = false;
+        if (state.picker === 'panel') closeSheet();
+      }
+      if (state.tab !== 'devices') selectTab('devices');
+    }
+    try {
+      localStorage.setItem(viewLib.KEY, target);
+    } catch (err) {
+      // Storage closed: the mode still works, it just is not remembered.
+    }
+    render();
+    // Keep the address in step, so a bookmark taken on the wall opens the wall,
+    // and a reload does not depend on storage alone.
+    const url = new URL(location.href);
+    if (viewLib.isFull(target)) url.searchParams.set('view', target);
+    else url.searchParams.delete('view');
+    history.replaceState(null, '', url);
+  }
+
+  els.viewFull.addEventListener('click', () => setView(viewLib.FULL));
+  els.viewExit.addEventListener('click', () => setView(viewLib.EDIT));
+
+  // Escape leaves the wall the way it leaves a modal. An open dialog handles its
+  // own Escape (and closing it must not also move the page out of the mode), so
+  // that case is left alone.
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !viewLib.isFull(state.view)) return;
+    if (document.querySelector('dialog[open]')) return;
+    setView(viewLib.EDIT);
   });
 
   // ---------- tabs ----------

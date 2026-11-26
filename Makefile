@@ -43,6 +43,7 @@ web-check:
 	node --check web/static/names.js
 	node --check web/static/rules.js
 	node --check web/static/power.js
+	node --check web/static/view.js
 
 # Rules the dashboard applies to device data, tested without a browser.
 web-test:

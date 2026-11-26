@@ -7,6 +7,24 @@
   <!-- Which bundle this page was rendered from. The page compares it with what
        the server reports and reloads when a restart brought new code. -->
   <meta name="coolhome-build" content="{{.Build}}">
+  <!-- Режим отображения ставится на <html> до первой отрисовки: планшет на стене
+       обычно открывается в полном экране, и шапка, появившаяся и тут же
+       исчезнувшая, читается как сбой, а не как настройка. Ключ и значения те же,
+       что в /static/view.js; тест в web-tests/view.test.js сверяет, что копии не
+       разошлись. -->
+  <script>
+    (function () {
+      var mode = 'edit';
+      try {
+        var params = new URLSearchParams(location.search);
+        var asked = params.get('view');
+        if (params.get('edit') === '1') mode = 'edit';
+        else if (asked === 'full' || asked === 'edit') mode = asked;
+        else if (localStorage.getItem('coolhome-view') === 'full') mode = 'full';
+      } catch (err) { /* хранилище закрыто: остаётся обычная страница */ }
+      document.documentElement.dataset.view = mode;
+    })();
+  </script>
   <title>CoolHome — умный дом</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230e1116'/%3E%3Cpath d='M8 15.5 16 9l8 6.5V23a1 1 0 0 1-1 1h-5v-6h-4v6H9a1 1 0 0 1-1-1z' fill='%236ee7b7'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/styles.css">
@@ -37,8 +55,18 @@
           data-tab="rules" aria-selected="false" aria-controls="rules">Правила</button>
       </nav>
       <button id="refresh" class="ghost" type="button">Обновить</button>
+      <!-- Два вида одного экрана. Эта кнопка уводит на стену; обратно — плавающая
+           в углу, потому что шапки в том режиме уже нет. -->
+      <button id="view-full" class="ghost" type="button"
+              title="Оставить только панель и дашборд">Полный экран</button>
     </div>
   </header>
+
+  <!-- Выход из полного экрана. Кнопка висит поверх страницы, а не в шапке:
+       шапки в этом режиме нет, а панель может быть пустой — тогда её
+       собственные кнопки не нарисованы, и выйти было бы нечем. -->
+  <button type="button" class="ghost view-exit" id="view-exit" hidden
+          title="Вернуть шапку, вкладки и подвал (Esc)">✎ Режим редактирования</button>
 
   <!-- Что сейчас включено. Панель над сеткой: на пульте нужно видеть
        оставленный свет, не листая карточки. -->
@@ -247,6 +275,7 @@
 
   <script src="/static/battery.js" defer></script>
   <script src="/static/groups.js" defer></script>
+  <script src="/static/view.js" defer></script>
   <script src="/static/figures.js" defer></script>
   <script src="/static/panel.js" defer></script>
   <script src="/static/names.js" defer></script>
