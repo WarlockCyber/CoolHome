@@ -737,3 +737,140 @@ func TestHiddenIsCopiedOnRead(t *testing.T) {
 		t.Errorf("the store changed through the returned slice: %v", second)
 	}
 }
+
+// A group is a tab: a named set of devices in a chosen order. A device sits in
+// at most one group — moving it is a move — while favourites cut across groups.
+func TestGroupsAreStoredAndOrdered(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "d.json")
+	s := New(path)
+	in := Layout{
+		Groups: []Group{
+			{ID: "g1", Name: "  Свет  ", Devices: []string{" lamp-1 ", "lamp-2"}},
+			{ID: "g2", Name: "Климат"},
+		},
+		Favorites: []string{"lamp-2", "thermo-1"},
+	}
+	if _, err := s.Save(in); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	again, err := New(path).Current()
+	if err != nil {
+		t.Fatalf("Current: %v", err)
+	}
+	if len(again.Groups) != 2 {
+		t.Fatalf("groups = %+v", again.Groups)
+	}
+	if again.Groups[0].Name != "Свет" || again.Groups[0].Devices[0] != "lamp-1" {
+		t.Errorf("first group = %+v, want it trimmed and in order", again.Groups[0])
+	}
+	// A favourite may also live in a group: that is the point of favourites.
+	if len(again.Favorites) != 2 || again.Favorites[0] != "lamp-2" {
+		t.Errorf("favourites = %v", again.Favorites)
+	}
+}
+
+func TestGroupsRejectBadInput(t *testing.T) {
+	cases := map[string][]Group{
+		"no id":     {{Name: "Свет"}},
+		"no name":   {{ID: "g1"}},
+		"long name": {{ID: "g1", Name: strings.Repeat("я", MaxGroupNameLen+1)}},
+		"duplicate id": {
+			{ID: "g1", Name: "Свет"}, {ID: "g1", Name: "Климат"},
+		},
+		"duplicate name": {
+			{ID: "g1", Name: "Свет"}, {ID: "g2", Name: "свет"},
+		},
+		// A device in two tabs is two places to change it from, and they can
+		// disagree after a refresh.
+		"device in two groups": {
+			{ID: "g1", Name: "Свет", Devices: []string{"lamp-1"}},
+			{ID: "g2", Name: "Спальня", Devices: []string{"lamp-1"}},
+		},
+	}
+	for name, groups := range cases {
+		if _, err := NormalizeGroups(groups); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: err = %v, want ErrInvalid", name, err)
+		}
+	}
+}
+
+func TestGroupsNormalizeWithinLimits(t *testing.T) {
+	// The same device twice in one tab is a no-op, not an error; a blank id is
+	// dropped rather than rejected.
+	groups, err := NormalizeGroups([]Group{{ID: "g1", Name: "Свет",
+		Devices: []string{"lamp-1", " lamp-1 ", "", "lamp-2"}}})
+	if err != nil {
+		t.Fatalf("NormalizeGroups: %v", err)
+	}
+	if len(groups[0].Devices) != 2 {
+		t.Errorf("devices = %v, want the duplicate and the blank dropped", groups[0].Devices)
+	}
+
+	tooMany := make([]Group, MaxGroups+1)
+	for i := range tooMany {
+		tooMany[i] = Group{ID: "g" + string(rune('a'+i)), Name: "g" + string(rune('a'+i))}
+	}
+	if _, err := NormalizeGroups(tooMany); !errors.Is(err, ErrInvalid) {
+		t.Errorf("too many groups: err = %v, want ErrInvalid", err)
+	}
+}
+
+func TestFavoritesAreBoundedAndDeduplicated(t *testing.T) {
+	out, err := NormalizeFavorites([]string{"a", " b ", "a", ""})
+	if err != nil {
+		t.Fatalf("NormalizeFavorites: %v", err)
+	}
+	if len(out) != 2 || out[0] != "a" || out[1] != "b" {
+		t.Errorf("favourites = %v", out)
+	}
+	long := make([]string, MaxFavorites+1)
+	for i := range long {
+		long[i] = "d" + string(rune('a'+i%26)) + string(rune('a'+i/26))
+	}
+	if _, err := NormalizeFavorites(long); !errors.Is(err, ErrInvalid) {
+		t.Errorf("too many favourites: err = %v, want ErrInvalid", err)
+	}
+}
+
+// The slices must not be shared with the caller: an editor that appends to a
+// group's devices would otherwise change the store.
+func TestGroupsAreCopiedOnRead(t *testing.T) {
+	s := New("")
+	if _, err := s.Save(Layout{
+		Groups:    []Group{{ID: "g1", Name: "Свет", Devices: []string{"lamp-1"}}},
+		Favorites: []string{"lamp-1"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Groups[0].Devices[0] = "подменено"
+	first.Groups[0].Name = "подменено"
+	first.Favorites[0] = "подменено"
+
+	second, _ := s.Current()
+	if second.Groups[0].Devices[0] != "lamp-1" || second.Groups[0].Name != "Свет" {
+		t.Errorf("the store changed through the returned groups: %+v", second.Groups)
+	}
+	if second.Favorites[0] != "lamp-1" {
+		t.Errorf("the store changed through the returned favourites: %v", second.Favorites)
+	}
+}
+
+// An old file has neither key at all.
+func TestFileWithoutGroupsLoads(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "d.json")
+	if err := os.WriteFile(path, []byte(`{"widgets":[{"device_id":"d1","code":"c1"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	layout, err := New(path).Current()
+	if err != nil {
+		t.Fatalf("Current: %v", err)
+	}
+	if layout.Groups != nil || layout.Favorites != nil {
+		t.Errorf("groups = %v, favourites = %v, want none", layout.Groups, layout.Favorites)
+	}
+}

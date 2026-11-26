@@ -35,6 +35,12 @@ type dashboardResponse struct {
 	// the Tuya app cannot be deleted through the API, so hiding is how an
 	// obsolete one leaves the list.
 	Hidden []string `json:"hidden"`
+	// Groups are the tabs of the main screen, and Favorites is the cross-cutting
+	// list shown first. Both are local, like names and descriptions.
+	Groups          []dashboard.Group `json:"groups"`
+	Favorites       []string          `json:"favorites"`
+	MaxGroups       int               `json:"max_groups"`
+	MaxGroupNameLen int               `json:"max_group_name_len"`
 	// MaxNameLen is the bound the server enforces on one name.
 	MaxNameLen int `json:"max_name_len"`
 }
@@ -59,17 +65,27 @@ func (s *server) newDashboardResponse(layout dashboard.Layout) dashboardResponse
 	if layout.Hidden == nil {
 		layout.Hidden = []string{}
 	}
+	if layout.Groups == nil {
+		layout.Groups = []dashboard.Group{}
+	}
+	if layout.Favorites == nil {
+		layout.Favorites = []string{}
+	}
 	return dashboardResponse{
-		Widgets:      layout.Widgets,
-		Panel:        layout.Panel,
-		Names:        layout.Names,
-		Descriptions: layout.Descriptions,
-		Hidden:       layout.Hidden,
-		MaxDescLen:   dashboard.MaxDescLen,
-		Editable:     s.dash.Path() != "",
-		MaxWidgets:   dashboard.MaxWidgets,
-		MaxPanel:     dashboard.MaxPanel,
-		MaxNameLen:   dashboard.MaxNameLen,
+		Widgets:         layout.Widgets,
+		Panel:           layout.Panel,
+		Names:           layout.Names,
+		Descriptions:    layout.Descriptions,
+		Hidden:          layout.Hidden,
+		Groups:          layout.Groups,
+		Favorites:       layout.Favorites,
+		MaxGroups:       dashboard.MaxGroups,
+		MaxGroupNameLen: dashboard.MaxGroupNameLen,
+		MaxDescLen:      dashboard.MaxDescLen,
+		Editable:        s.dash.Path() != "",
+		MaxWidgets:      dashboard.MaxWidgets,
+		MaxPanel:        dashboard.MaxPanel,
+		MaxNameLen:      dashboard.MaxNameLen,
 	}
 }
 
@@ -101,14 +117,17 @@ func (s *server) handleSaveDashboard(w http.ResponseWriter, r *http.Request) {
 		Names        *map[string]string  `json:"names"`
 		Descriptions *map[string]string  `json:"descriptions"`
 		Hidden       *[]string           `json:"hidden"`
+		Groups       *[]dashboard.Group  `json:"groups"`
+		Favorites    *[]string           `json:"favorites"`
 	}
 	if err := dec.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "некорректный JSON: "+err.Error())
 		return
 	}
 	if req.Widgets == nil && req.Panel == nil && req.Names == nil &&
-		req.Descriptions == nil && req.Hidden == nil {
-		writeError(w, http.StatusBadRequest, "нечего сохранять: нужен widgets, panel, names, descriptions или hidden")
+		req.Descriptions == nil && req.Hidden == nil && req.Groups == nil && req.Favorites == nil {
+		writeError(w, http.StatusBadRequest,
+			"нечего сохранять: нужен widgets, panel, names, descriptions, hidden, groups или favorites")
 		return
 	}
 	// Update, not Current-then-Save: the two lists are edited from different
@@ -120,6 +139,15 @@ func (s *server) handleSaveDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.Panel != nil {
 			layout.Panel = *req.Panel
+		}
+		if req.Groups != nil {
+			// The whole list: creating, renaming, moving a device and deleting a
+			// group are all one edit of the tab strip, and a merge could not
+			// express "this device left that group".
+			layout.Groups = *req.Groups
+		}
+		if req.Favorites != nil {
+			layout.Favorites = *req.Favorites
 		}
 		if req.Hidden != nil {
 			// The whole list, like names: an empty list shows everything again.
